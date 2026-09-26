@@ -13,13 +13,16 @@ import (
 
 // Config is the merged configuration. Every path in it is absolute after Load.
 type Config struct {
-	Roots     []string        `toml:"roots"`
-	Exclude   []string        `toml:"exclude"`
-	Budget    Budget          `toml:"budget"`
-	Analysis  Analysis        `toml:"analysis"`
-	Origins   []OriginRule    `toml:"origin"`
-	Builds    []BuildRule     `toml:"build"`
-	Harnesses []StaticHarness `toml:"harness"`
+	Roots   []string `toml:"roots"`
+	Exclude []string `toml:"exclude"`
+	// SkipContexts lists directories (globs) where no session starts, such as
+	// a folder of other users' instruction files, so no context is built there.
+	SkipContexts []string        `toml:"skip_contexts"`
+	Budget       Budget          `toml:"budget"`
+	Analysis     Analysis        `toml:"analysis"`
+	Origins      []OriginRule    `toml:"origin"`
+	Builds       []BuildRule     `toml:"build"`
+	Harnesses    []StaticHarness `toml:"harness"`
 }
 
 // Budget holds the owner's own size limit. Zero means no limit.
@@ -101,6 +104,7 @@ func Load(home string, paths ...string) (Config, error) {
 func merge(a, b Config) Config {
 	a.Roots = append(a.Roots, b.Roots...)
 	a.Exclude = append(a.Exclude, b.Exclude...)
+	a.SkipContexts = append(a.SkipContexts, b.SkipContexts...)
 	if b.Budget.FileBytes != 0 {
 		a.Budget.FileBytes = b.Budget.FileBytes
 	}
@@ -115,6 +119,7 @@ func merge(a, b Config) Config {
 
 func (c Config) expand(home string) Config {
 	c.Roots = ExpandAll(home, c.Roots)
+	c.SkipContexts = ExpandAll(home, c.SkipContexts)
 	for i := range c.Origins {
 		c.Origins[i].Path = Expand(home, c.Origins[i].Path)
 		c.Origins[i].Source = ExpandAll(home, c.Origins[i].Source)

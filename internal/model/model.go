@@ -111,19 +111,25 @@ type Ref struct {
 
 // Context is a runtime context: what one harness loads in one directory.
 type Context struct {
-	ID        string         `json:"id"`
-	Harness   string         `json:"harness"`
-	Dir       string         `json:"dir"`
-	Display   string         `json:"display"`
-	Source    string         `json:"source"` // "probe" or "static"
-	Version   string         `json:"version,omitempty"`
-	ProbedAt  *time.Time     `json:"probedAt,omitempty"`
-	Entries   []ContextEntry `json:"entries"`
+	ID       string         `json:"id"`
+	Harness  string         `json:"harness"`
+	Dir      string         `json:"dir"`
+	Display  string         `json:"display"`
+	Source   string         `json:"source"` // "probe" or "static"
+	Version  string         `json:"version,omitempty"`
+	ProbedAt *time.Time     `json:"probedAt,omitempty"`
+	Entries  []ContextEntry `json:"entries"`
+	// Skipped lists instruction files a harness could have loaded here but did
+	// not, each with a reason.
+	Skipped   []ContextEntry `json:"skipped,omitempty"`
 	Skills    []ContextItem  `json:"skills"`
 	Subagents []ContextItem  `json:"subagents"`
 	Bytes     int            `json:"bytes"`
 	Error     string         `json:"error,omitempty"`
-	Analysis  *AnalysisInfo  `json:"analysis,omitempty"`
+	// Stale is true when a file that could change this probe's result has
+	// changed since it ran.
+	Stale    bool          `json:"stale,omitempty"`
+	Analysis *AnalysisInfo `json:"analysis,omitempty"`
 }
 
 // AnalysisInfo records the last analysis of a context.
@@ -141,6 +147,7 @@ type ContextEntry struct {
 	Bytes     int    `json:"bytes"`
 	Truncated bool   `json:"truncated,omitempty"`
 	LostBytes int    `json:"lostBytes,omitempty"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 // ContextItem is a skill or subagent a context offers.
