@@ -80,6 +80,8 @@ export interface ContextEntry {
   bytes: number;
   truncated?: boolean;
   lostBytes?: number;
+  /** Why the harness skipped this file, for entries in `skipped`. */
+  reason?: string;
 }
 
 export interface ContextItem {
@@ -104,10 +106,14 @@ export interface RuntimeContext {
   version?: string;
   probedAt?: string;
   entries: ContextEntry[];
+  /** Files the harness could have loaded here but did not, each with a reason. */
+  skipped?: ContextEntry[];
   skills: ContextItem[];
   subagents: ContextItem[];
   bytes: number;
   error?: string;
+  /** A file that could change the result changed since the probe. */
+  stale?: boolean;
   analysis?: AnalysisInfo;
 }
 
@@ -138,6 +144,13 @@ export interface HarnessInfo {
   probe: boolean;
 }
 
+/** A Claude Code or Codex context that could be probed but has not been yet. */
+export interface Candidate {
+  harness: HarnessName;
+  dir: string;
+  display: string;
+}
+
 export interface State {
   owner: string;
   home: string;
@@ -150,6 +163,8 @@ export interface State {
   findings: Finding[];
   /** The CLI used for analysis ("claude" or "codex"), empty when none is installed. */
   analysis?: string;
+  /** Directories whose Claude Code or Codex context has not been probed yet. */
+  unprobed?: Candidate[];
 }
 
 export interface FileResponse {
@@ -183,6 +198,14 @@ export interface GitResponse {
   repo: string;
   diff: string;
   dirty: boolean;
+  /** The current branch, empty when the file is not in a repository. */
+  branch: string;
+  /** The branch's upstream, such as "origin/main", empty when it has none. */
+  upstream: string;
+  /** Commits on the branch that the upstream lacks. */
+  ahead: number;
+  /** Commits on the upstream that the branch lacks. */
+  behind: number;
 }
 
 export interface CommitRequest {
@@ -193,6 +216,19 @@ export interface CommitRequest {
 export interface CommitResponse {
   repo: string;
   commit: string;
+  output: string;
+}
+
+/** Pushes the repository holding this file. It only fast-forwards the upstream. */
+export interface PushRequest {
+  id: string;
+}
+
+/** A refused push answers 409 with git's refusal in `error`. */
+export interface PushResponse {
+  repo: string;
+  branch: string;
+  upstream: string;
   output: string;
 }
 
@@ -212,15 +248,19 @@ export interface Proposal {
 
 export interface Job {
   id: string;
-  kind: 'analyse' | 'fix';
+  kind: 'analyse' | 'fix' | 'probe';
   status: 'running' | 'done' | 'error';
   context?: string;
   findingId?: string;
   startedAt: string;
   finishedAt?: string;
+  /** For a probe job, set only when every probe failed. */
   error?: string;
   findings?: Finding[];
   proposal?: Proposal;
+  /** Progress of a probe job: contexts probed so far, out of total. */
+  done?: number;
+  total?: number;
 }
 
 export interface ApplyRequest {
