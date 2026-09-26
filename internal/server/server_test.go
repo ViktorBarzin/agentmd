@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"io"
 	"net"
@@ -339,5 +340,25 @@ func TestJobs(t *testing.T) {
 	}
 	if rec := do(t, h, call{method: "GET", path: "/api/jobs/nope"}); rec.Code != 404 {
 		t.Errorf("unknown job: %d", rec.Code)
+	}
+}
+
+func TestJSONIsGzippedWhenAccepted(t *testing.T) {
+	tr := testutil.New(t)
+	h := newServer(t, newApp(t, tr), Options{}).Handler()
+	rec := do(t, h, call{method: "GET", path: "/api/state", headers: map[string]string{"Accept-Encoding": "gzip, br"}})
+	if rec.Code != 200 || rec.Header().Get("Content-Encoding") != "gzip" {
+		t.Fatalf("status %d encoding %q", rec.Code, rec.Header().Get("Content-Encoding"))
+	}
+	zr, err := gzip.NewReader(rec.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st model.State
+	if err := json.NewDecoder(zr).Decode(&st); err != nil || st.Owner != "alex" {
+		t.Errorf("decoded %+v, %v", st, err)
+	}
+	if rec := do(t, h, call{method: "GET", path: "/api/state"}); rec.Header().Get("Content-Encoding") != "" {
+		t.Error("no gzip unless asked")
 	}
 }

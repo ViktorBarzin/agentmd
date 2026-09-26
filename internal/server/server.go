@@ -3,6 +3,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -195,7 +196,7 @@ func (s *Server) Handler() http.Handler {
 	if s.opts.UI != nil {
 		mux.Handle("/", spa(s.opts.UI))
 	}
-	return s.guard(mux)
+	return s.guard(withGzip(mux))
 }
 
 // guard applies the access checks and security headers to every request.
@@ -260,29 +261,78 @@ func loopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// spa serves the built UI, answering unknown paths with index.html.
+// spa serves the built UI, answering unknown paths with index.html, and
+// gzips text assets once, in memory, for clients that accept it.
 func spa(ui fs.FS) http.Handler {
-	files := http.FileServer(http.FS(ui))
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := strings.TrimPrefix(r.URL.Path, "/")
-		if p != "" {
-			if f, err := ui.Open(p); err == nil {
-				f.Close()
-				if strings.HasPrefix(p, "assets/") {
-					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-				}
-				files.ServeHTTP(w, r)
-				return
-			}
-		}
-		data, err := fs.ReadFile(ui, "index.html")
+	var mu sync.Mutex
+	zipped := map[string][]byte{}
+	serve := func(w http.ResponseWriter, r *http.Request, p string) {
+		data, err := fs.ReadFile(ui, p)
 		if err != nil {
 			http.Error(w, "the UI is not built into this binary", http.StatusNotFound)
 			return
 		}
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		ctype := mime(p)
+		w.Header().Set("Content-Type", ctype)
+		if strings.HasPrefix(p, "assets/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		text := strings.HasPrefix(ctype, "text/") || strings.Contains(ctype, "javascript") || strings.Contains(ctype, "json") || strings.Contains(ctype, "svg")
+		if text && len(data) > 1024 && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			mu.Lock()
+			z, ok := zipped[p]
+			if !ok {
+				var b strings.Builder
+				zw, _ := gzip.NewWriterLevel(&stringWriter{&b}, gzip.BestCompression)
+				_, _ = zw.Write(data)
+				_ = zw.Close()
+				z = []byte(b.String())
+				zipped[p] = z
+			}
+			mu.Unlock()
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Add("Vary", "Accept-Encoding")
+			_, _ = w.Write(z)
+			return
+		}
 		_, _ = w.Write(data)
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := strings.TrimPrefix(r.URL.Path, "/")
+		if p != "" && !strings.HasSuffix(p, "/") {
+			if st, err := fs.Stat(ui, p); err == nil && !st.IsDir() {
+				serve(w, r, p)
+				return
+			}
+		}
+		serve(w, r, "index.html")
 	})
+}
+
+type stringWriter struct{ b *strings.Builder }
+
+func (s *stringWriter) Write(p []byte) (int, error) { return s.b.Write(p) }
+
+func mime(p string) string {
+	switch {
+	case strings.HasSuffix(p, ".html"):
+		return "text/html; charset=utf-8"
+	case strings.HasSuffix(p, ".js"), strings.HasSuffix(p, ".mjs"):
+		return "text/javascript; charset=utf-8"
+	case strings.HasSuffix(p, ".css"):
+		return "text/css; charset=utf-8"
+	case strings.HasSuffix(p, ".svg"):
+		return "image/svg+xml"
+	case strings.HasSuffix(p, ".json"):
+		return "application/json"
+	case strings.HasSuffix(p, ".png"):
+		return "image/png"
+	case strings.HasSuffix(p, ".ico"):
+		return "image/x-icon"
+	case strings.HasSuffix(p, ".woff2"):
+		return "font/woff2"
+	}
+	return "application/octet-stream"
 }
 
 // Serve runs until ctx ends.
@@ -319,8 +369,30 @@ func openBrowser(url string) {
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
+	if gz, ok := w.(*gzipWriter); ok && gz.accept {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+		w.WriteHeader(status)
+		zw := gzip.NewWriter(gz.ResponseWriter)
+		_ = json.NewEncoder(zw).Encode(v)
+		_ = zw.Close()
+		return
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// gzipWriter marks a response whose client accepts gzip; writeJSON uses it.
+type gzipWriter struct {
+	http.ResponseWriter
+	accept bool
+}
+
+func withGzip(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		accept := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && strings.HasPrefix(r.URL.Path, "/api/")
+		next.ServeHTTP(&gzipWriter{ResponseWriter: w, accept: accept}, r)
+	})
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
