@@ -18,6 +18,8 @@ import (
 	"github.com/ViktorBarzin/agentmd/internal/app"
 	"github.com/ViktorBarzin/agentmd/internal/discover"
 	"github.com/ViktorBarzin/agentmd/internal/model"
+	"github.com/ViktorBarzin/agentmd/internal/server"
+	"github.com/ViktorBarzin/agentmd/web"
 )
 
 // version is set at build time with -ldflags "-X main.version=v0.1.0".
@@ -349,7 +351,35 @@ func probeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) erro
 	return nil
 }
 
-// serve is replaced by the server package once it exists.
-var serve = func(ctx context.Context, args []string, stdout, stderr io.Writer) error {
-	return errors.New("serve is not built yet")
+func serve(ctx context.Context, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var c common
+	c.register(fs)
+	listen := fs.String("listen", server.DefaultListen, "address to listen on; anything but loopback needs --proxy-secret-file")
+	open := fs.Bool("open", false, "open the UI in a browser")
+	secret := fs.String("proxy-secret-file", "", "require this shared secret in "+server.SecretHeader+" on every request")
+	identity := fs.String("identity-header", "X-Forwarded-User", "with a proxy secret: the header naming the signed-in user")
+	var allow stringList
+	fs.Var(&allow, "allow-identity", "with a proxy secret: an identity allowed to use this instance (repeatable; default: your user name)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	a, err := app.New(c.options())
+	if err != nil {
+		return err
+	}
+	if _, err := a.Scan(); err != nil {
+		return err
+	}
+	s, err := server.New(a, server.Options{Listen: *listen, ProxySecretFile: *secret, IdentityHeader: *identity,
+		AllowIdentities: allow, Open: *open, Version: version, UI: web.Dist()}, stderr)
+	if err != nil {
+		return err
+	}
+	ln, err := s.Listen()
+	if err != nil {
+		return err
+	}
+	return s.Serve(ctx, ln)
 }

@@ -255,12 +255,12 @@ func (a *App) Scan() (*model.State, error) {
 			}
 		}
 	}
-	a.attachAnalysis(res, contexts)
 	rs = dropOfferedSkills(rs, contexts)
+	analysed := a.analysisFor(res, contexts)
 
 	fs := findings.Compute(findings.Input{Files: res.Files, Refs: rs, Contexts: contexts,
 		CodexMaxBytes: henv.Codex.MaxBytes, FileBudget: a.cfg.Budget.FileBytes})
-	fs = append(fs, a.analysisFindings(contexts)...)
+	fs = append(fs, analysed...)
 	findings.Sort(fs)
 
 	st := &model.State{

@@ -228,7 +228,7 @@ type Candidate struct {
 // Job is a long-running analysis or fix proposal.
 type Job struct {
 	ID         string     `json:"id"`
-	Kind       string     `json:"kind"`   // "analyse" or "fix"
+	Kind       string     `json:"kind"`   // "analyse", "fix" or "probe"
 	Status     string     `json:"status"` // "running", "done" or "error"
 	Context    string     `json:"context,omitempty"`
 	FindingID  string     `json:"findingId,omitempty"`
@@ -237,6 +237,8 @@ type Job struct {
 	Error      string     `json:"error,omitempty"`
 	Findings   []Finding  `json:"findings,omitempty"`
 	Proposal   *Proposal  `json:"proposal,omitempty"`
+	Done       int        `json:"done,omitempty"`
+	Total      int        `json:"total,omitempty"`
 }
 
 // Proposal is a fix proposal: whole-file before and after for each file it touches.

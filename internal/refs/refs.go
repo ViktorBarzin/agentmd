@@ -278,11 +278,11 @@ func (b *builder) origins() {
 			continue
 		}
 		srcID := src
-		if rule.Field != "" {
-			srcID += "#" + rule.Field
+		if f := rule.SourceFieldName(); f != "" {
+			srcID += "#" + f
 		}
 		if _, ok := b.in.Res.Files[srcID]; !ok {
-			if rule.Field != "" {
+			if rule.SourceFieldName() != "" {
 				continue
 			}
 			if b.in.Res.Add(src, model.KindInstruction, nil) == nil {
@@ -290,7 +290,7 @@ func (b *builder) origins() {
 			}
 		}
 		b.add(model.Ref{From: copyID, To: srcID, Kind: model.RefBuild, Sub: "origin"})
-		c.Access.Origin = &model.Origin{FileID: srcID, Path: src, Field: rule.Field, Note: rule.Note}
+		c.Access.Origin = &model.Origin{FileID: srcID, Path: src, Field: rule.SourceFieldName(), Note: rule.Note}
 	}
 }
 

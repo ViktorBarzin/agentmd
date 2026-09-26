@@ -99,3 +99,15 @@ func TestParseCodexPromptInput(t *testing.T) {
 		t.Errorf("skills = %+v", c.Skills)
 	}
 }
+
+// Outside a git repository Codex drops the "for <dir>" part of the heading.
+func TestParseCodexPromptInputOutsideARepo(t *testing.T) {
+	items := []map[string]any{{"type": "message", "role": "user", "content": []map[string]string{
+		{"type": "input_text", "text": "# AGENTS.md instructions\n\n<INSTRUCTIONS>\n# User only\n</INSTRUCTIONS>"},
+	}}}
+	data, _ := json.Marshal(items)
+	c, err := ParseCodexPromptInput(data)
+	if err != nil || !c.HasBlock || c.Instructions != "# User only" {
+		t.Errorf("got %+v, %v", c, err)
+	}
+}

@@ -209,8 +209,8 @@ func (s *scanner) harnessLocations() {
 	}
 	for _, o := range s.env.Config.Origins {
 		if src := FirstExisting(o.Source); src != "" {
-			if o.Field != "" {
-				s.addEmbedded(src, o.Field, nil)
+			if f := o.SourceFieldName(); f != "" {
+				s.addEmbedded(src, f, nil)
 			} else {
 				s.addFile(src, model.KindInstruction, nil)
 			}

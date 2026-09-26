@@ -110,15 +110,19 @@ func TestBuiltFromConfigAndOrigin(t *testing.T) {
 	b := tr.File(filepath.Join(tr.Home, ".agents/b.md"), "# b\n")
 	settings := tr.File(filepath.Join(tr.Etc, "claude-code/managed-settings.json"), `{"claudeMd": "# Org\n"}`)
 	src := tr.File(filepath.Join(tr.Code, "infra/managed-settings.json"), `{"claudeMd": "# Org\n"}`)
+	codexCopy := tr.File(filepath.Join(tr.Etc, "codex/requirements.toml"), "additional_developer_instructions = \"# Org\\n\"\n")
 	cfg := config.Config{
 		Builds: []config.BuildRule{{Output: out, Parts: []string{a, b}, Command: "make agents"}},
-		Origins: []config.OriginRule{{Path: settings, Field: "claudeMd", Source: []string{filepath.Join(tr.Code, "missing.json"), src},
-			Note: "installed hourly"}},
+		Origins: []config.OriginRule{
+			{Path: settings, Field: "claudeMd", Source: []string{filepath.Join(tr.Code, "missing.json"), src}, Note: "installed hourly"},
+			{Path: codexCopy, Field: "additional_developer_instructions", Source: []string{src}, SourceField: "claudeMd"},
+		},
 	}
 	res, rs := build(t, tr, cfg)
 	has(t, rs, out, a, model.RefBuild, "config")
 	has(t, rs, out, b, model.RefBuild, "config")
 	has(t, rs, settings+"#claudeMd", src+"#claudeMd", model.RefBuild, "origin")
+	has(t, rs, codexCopy+"#additional_developer_instructions", src+"#claudeMd", model.RefBuild, "origin")
 	copyFile := res.Files[settings+"#claudeMd"]
 	if copyFile.Access.Origin == nil || copyFile.Access.Origin.FileID != src+"#claudeMd" || copyFile.Access.Origin.Note != "installed hourly" {
 		t.Errorf("origin = %+v", copyFile.Access.Origin)

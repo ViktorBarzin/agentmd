@@ -42,7 +42,17 @@ type OriginRule struct {
 	Path   string   `toml:"path"`
 	Field  string   `toml:"field"`
 	Source []string `toml:"source"`
-	Note   string   `toml:"note"`
+	// SourceField is the field in the source, when it differs from Field.
+	SourceField string `toml:"source_field"`
+	Note        string `toml:"note"`
+}
+
+// SourceFieldName is the field to read in the source file.
+func (o OriginRule) SourceFieldName() string {
+	if o.SourceField != "" {
+		return o.SourceField
+	}
+	return o.Field
 }
 
 // BuildRule says that Output is built from Parts by Command.

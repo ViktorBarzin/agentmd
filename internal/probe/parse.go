@@ -189,7 +189,7 @@ func ParseCodexPromptInput(data []byte) (*CodexCapture, error) {
 	for _, it := range items {
 		for _, t := range textsOf(it.Content) {
 			switch {
-			case strings.HasPrefix(t, "# AGENTS.md instructions for ") && !c.HasBlock:
+			case strings.HasPrefix(t, "# AGENTS.md instructions") && !c.HasBlock:
 				if body, ok := between(t, "<INSTRUCTIONS>\n", "\n</INSTRUCTIONS>"); ok {
 					c.Instructions, c.HasBlock = body, true
 				} else if body, ok := between(t, "<INSTRUCTIONS>", "</INSTRUCTIONS>"); ok {
