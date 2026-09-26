@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { candidateId } from '../contexts';
+  import { probeBacklog } from '../contexts';
   import { plural } from '../format';
   import { readStored, writeStored } from '../storage';
   import { store } from '../store.svelte';
@@ -42,22 +42,32 @@
   const groups = $derived(groupFiles(matching, home, order));
   const currentId = $derived(store.route.name === 'file' ? store.route.id : null);
   const searching = $derived(store.query.trim() !== '');
-  const unprobed = $derived(store.data?.unprobed ?? []);
+  const backlog = $derived(store.data ? probeBacklog(store.data) : { unprobed: 0, stale: 0 });
 </script>
 
 <div class="files-view">
   {#if store.context}
     <ContextSummary context={store.context} />
-  {:else if unprobed.length > 0 && !searching}
-    <div class="banner probe-note">
+  {:else if (backlog.unprobed > 0 || backlog.stale > 0 || store.probingAll) && !searching}
+    <div class="banner probe-note" role="status">
       <Icon name="probe" />
       <div class="banner-body">
-        Claude Code or Codex has not been probed in {plural(unprobed.length, 'directory', 'directories')} yet, so what loads
-        there is unknown.
+        {#if store.probingAll}
+          {store.probeStatus}. Claude Code and Codex start in each directory to record what they load.
+        {:else if backlog.unprobed && backlog.stale}
+          {plural(backlog.unprobed, 'directory', 'directories')} not probed yet and {plural(backlog.stale, 'context')} out of
+          date, so what loads there is unknown or may have changed.
+        {:else if backlog.unprobed}
+          Claude Code or Codex has not been probed in {plural(backlog.unprobed, 'directory', 'directories')} yet, so what loads
+          there is unknown.
+        {:else}
+          {plural(backlog.stale, 'probed context')} out of date: a file {backlog.stale === 1 ? 'it loads' : 'they load'} changed
+          since the probe.
+        {/if}
         <div class="banner-actions">
-          <button class="btn small" disabled={store.probing.size > 0} onclick={() => store.probe(unprobed.map(candidateId))}>
-            {#if store.probing.size > 0}<span class="spinner"></span>{:else}<Icon name="probe" size={13} />{/if}
-            Probe {unprobed.length === 1 ? 'it' : 'them'}
+          <button class="btn small" disabled={store.probingAll} onclick={() => store.probe()}>
+            {#if store.probingAll}<span class="spinner"></span>{:else}<Icon name="probe" size={13} />{/if}
+            Probe all
           </button>
         </div>
       </div>

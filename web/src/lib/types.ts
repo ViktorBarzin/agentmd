@@ -80,6 +80,8 @@ export interface ContextEntry {
   bytes: number;
   truncated?: boolean;
   lostBytes?: number;
+  /** Why the harness skipped this file, for entries in `skipped`. */
+  reason?: string;
 }
 
 export interface ContextItem {
@@ -104,10 +106,14 @@ export interface RuntimeContext {
   version?: string;
   probedAt?: string;
   entries: ContextEntry[];
+  /** Files the harness could have loaded here but did not, each with a reason. */
+  skipped?: ContextEntry[];
   skills: ContextItem[];
   subagents: ContextItem[];
   bytes: number;
   error?: string;
+  /** A file that could change the result changed since the probe. */
+  stale?: boolean;
   analysis?: AnalysisInfo;
 }
 
@@ -242,15 +248,19 @@ export interface Proposal {
 
 export interface Job {
   id: string;
-  kind: 'analyse' | 'fix';
+  kind: 'analyse' | 'fix' | 'probe';
   status: 'running' | 'done' | 'error';
   context?: string;
   findingId?: string;
   startedAt: string;
   finishedAt?: string;
+  /** For a probe job, set only when every probe failed. */
   error?: string;
   findings?: Finding[];
   proposal?: Proposal;
+  /** Progress of a probe job: contexts probed so far, out of total. */
+  done?: number;
+  total?: number;
 }
 
 export interface ApplyRequest {

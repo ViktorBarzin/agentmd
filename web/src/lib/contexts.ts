@@ -1,6 +1,6 @@
 // Runtime contexts: grouping them for the picker, deriving load order, and
 // working out which files belong to a context.
-import type { Candidate, HarnessName, Job, Ref, RuntimeContext, State } from './types';
+import type { Candidate, ContextEntry, HarnessName, Job, Ref, RuntimeContext, State } from './types';
 
 /** A load-order reference, derived on the client from a context's entries. */
 export interface LoadRef extends Ref {
@@ -20,7 +20,7 @@ export function loadRefs(contexts: RuntimeContext[]): LoadRef[] {
   return out;
 }
 
-export type MemberRole = 'entry' | 'link-target' | 'source' | 'skill' | 'subagent';
+export type MemberRole = 'entry' | 'link-target' | 'source' | 'skill' | 'subagent' | 'skipped';
 
 export interface Membership {
   role: MemberRole;
@@ -28,6 +28,8 @@ export interface Membership {
   position?: number;
   /** The file that brought this one in: the link, or the built file. */
   via?: string;
+  /** Why the harness skipped the file, for role "skipped". */
+  reason?: string;
 }
 
 /**
@@ -82,6 +84,8 @@ export function contextMembers(ctx: RuntimeContext, refs: Ref[]): Map<string, Me
     add(s.fileId, { role: 'subagent' });
     expand(s.fileId, {}, 'subagent');
   }
+  // Files the harness passed over belong to the picture too, marked as such.
+  for (const e of ctx.skipped ?? []) add(e.fileId, e.reason ? { role: 'skipped', reason: e.reason } : { role: 'skipped' });
   return out;
 }
 
@@ -136,6 +140,35 @@ export function groupContexts(s: Pick<State, 'harnesses' | 'contexts' | 'unprobe
     g.unprobed.sort((a, b) => a.dir.localeCompare(b.dir));
   }
   return out;
+}
+
+export interface Skip {
+  context: RuntimeContext;
+  entry: ContextEntry;
+}
+
+/** The contexts whose harness could have loaded a file but skipped it, with the reason. */
+export function contextsSkipping(fileId: string, contexts: RuntimeContext[]): Skip[] {
+  const out: Skip[] = [];
+  for (const c of contexts) {
+    for (const e of c.skipped ?? []) if (e.fileId === fileId) out.push({ context: c, entry: e });
+  }
+  return out;
+}
+
+/** What "Probe all" would probe: directories never probed, and stale contexts. */
+export function probeBacklog(s: Pick<State, 'contexts' | 'unprobed'>): { unprobed: number; stale: number } {
+  return {
+    unprobed: s.unprobed?.length ?? 0,
+    stale: s.contexts.filter((c) => c.source === 'probe' && c.stale).length,
+  };
+}
+
+/** "Probing 37 of 142" while a probe job runs. */
+export function probeProgress(job: Job): string {
+  if (job.status !== 'running') return '';
+  if (!job.total) return 'Probing';
+  return `Probing ${Math.min(job.done ?? 0, job.total)} of ${job.total}`;
 }
 
 export type AnalysisStatus =

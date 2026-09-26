@@ -26,7 +26,9 @@ function latency(method: string, path: string): number {
 }
 
 export function installMock(): MockServer {
-  const server = new MockServer();
+  // ?mockScale=70 adds 70 synthetic projects: about 300 files and 500 references.
+  const scale = Number(new URLSearchParams(location.search).get('mockScale')) || 0;
+  const server = new MockServer(Date.now, Math.min(Math.max(0, scale), 500));
   const realFetch = globalThis.fetch.bind(globalThis);
 
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {

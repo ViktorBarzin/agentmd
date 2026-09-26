@@ -17,6 +17,7 @@ import type {
   State,
 } from '../types';
 import { buildFixture, CODEX_BUDGET, CTX, describe, lineAt, P, shorten, type RepoGit } from './fixture';
+import { scaleFixture } from './scale';
 import { unifiedDiff } from './textdiff';
 import { byteLength, countLines, fakeSha, hashText } from './util';
 
@@ -34,11 +35,15 @@ const fail = (status: number, error: string, extra: object = {}): MockResponse =
 /** The analysis of this context fails, so the UI's error state can be seen. */
 const FAILING_CONTEXT = CTX.codexTripit;
 const JOB_MS = 2000;
+const PROBE_MS = 3000;
 
 interface PendingJob {
   job: Job;
+  startAt: number;
   finishAt: number;
   finish: (job: Job) => void;
+  /** Updates a running job's progress; `fraction` runs from 0 to 1. */
+  progress?: (job: Job, fraction: number) => void;
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -83,9 +88,11 @@ export class MockServer {
   private jobSeq = 0;
   private now: () => number;
 
-  constructor(now: () => number = Date.now) {
+  /** `scale` adds that many synthetic projects, for trying the UI at a larger size. */
+  constructor(now: () => number = Date.now, scale = 0) {
     this.now = now;
     const fx = buildFixture(now());
+    if (scale > 0) scaleFixture(fx, scale);
     this.state = fx.state;
     this.contents = fx.contents;
     this.head = new Map(fx.contents);
@@ -167,13 +174,12 @@ export class MockServer {
         if (e.truncated === undefined) e.bytes = sizes.get(e.fileId) ?? e.bytes;
       }
       c.bytes = c.entries.reduce((n, e) => n + e.bytes, 0);
-      const touched = c.entries.some((e) => {
-        const k = this.canonical(e.fileId);
-        if (k === key) return true;
-        const built = this.file(k)?.access.builtFrom ?? [];
-        return built.includes(key);
-      });
-      if (touched && c.analysis) c.analysis.stale = true;
+      const loaded = c.entries.some((e) => this.canonical(e.fileId) === key);
+      // Analysis reads a built file's parts, so an edited part also dates it.
+      const read = loaded || c.entries.some((e) => (this.file(this.canonical(e.fileId))?.access.builtFrom ?? []).includes(key));
+      if (read && c.analysis) c.analysis.stale = true;
+      // A probe's cache key includes the size and mtime of every file it loaded.
+      if (loaded && c.source === 'probe') c.stale = true;
     }
   }
 
@@ -225,16 +231,25 @@ export class MockServer {
   private tick() {
     const t = this.now();
     for (const p of this.jobs.values()) {
-      if (p.job.status === 'running' && p.finishAt <= t) {
+      if (p.job.status !== 'running') continue;
+      if (p.finishAt <= t) {
         p.job.finishedAt = this.iso();
         p.finish(p.job);
+      } else {
+        p.progress?.(p.job, (t - p.startAt) / (p.finishAt - p.startAt));
       }
     }
   }
 
-  private startJob(partial: Pick<Job, 'kind' | 'context' | 'findingId'>, finish: (job: Job) => void): Job {
+  private startJob(
+    partial: Pick<Job, 'kind' | 'context' | 'findingId' | 'done' | 'total'>,
+    finish: (job: Job) => void,
+    ms = JOB_MS,
+    progress?: (job: Job, fraction: number) => void,
+  ): Job {
     const job: Job = { id: `job-${++this.jobSeq}`, status: 'running', startedAt: this.iso(), ...partial };
-    this.jobs.set(job.id, { job, finishAt: this.now() + JOB_MS, finish });
+    const startAt = this.now();
+    this.jobs.set(job.id, { job, startAt, finishAt: startAt + ms, finish, progress });
     return structuredClone(job);
   }
 
@@ -406,19 +421,48 @@ export class MockServer {
     return ok({ repo, commit: sha, output });
   }
 
-  /** Probes the listed contexts, or every Claude Code and Codex context when the list is empty. */
+  /**
+   * Starts a probe job for the listed contexts, or for every unprobed and
+   * stale one when the list is empty. It takes about three seconds, with
+   * done and total counting up.
+   */
   private probe(body: unknown): MockResponse {
     const list = isRecord(body) && Array.isArray(body.contexts) ? body.contexts.filter((x): x is string => typeof x === 'string') : [];
-    const all = list.length === 0;
-    for (const c of this.state.contexts) {
-      if (c.source === 'probe' && (all || list.includes(c.id))) c.probedAt = this.iso();
-    }
+    const candidates = (this.state.unprobed ?? []).map((c) => `${c.harness}:${c.dir}`);
+    const probed = this.state.contexts.filter((c) => c.source === 'probe');
+    const targets =
+      list.length === 0
+        ? [...candidates, ...probed.filter((c) => c.stale).map((c) => c.id)]
+        : list.filter((id) => candidates.includes(id) || probed.some((c) => c.id === id));
+    if (list.length > 0 && targets.length === 0) return fail(404, `Nothing to probe: ${list.join(', ')} is not a Claude Code or Codex context.`);
+    const total = targets.length;
+    const job = this.startJob(
+      { kind: 'probe', done: 0, total },
+      (j) => {
+        this.applyProbe(targets);
+        j.done = total;
+        j.status = 'done';
+      },
+      total === 0 ? 0 : PROBE_MS,
+      (j, fraction) => {
+        j.done = Math.min(total, Math.floor(fraction * total));
+      },
+    );
+    return ok(job);
+  }
+
+  private applyProbe(targets: string[]) {
     const sizes = new Map(this.state.files.map((f) => [f.id, f.size]));
+    for (const c of this.state.contexts) {
+      if (c.source !== 'probe' || !targets.includes(c.id)) continue;
+      c.probedAt = this.iso();
+      delete c.stale;
+    }
     const still = [];
     for (const cand of this.state.unprobed ?? []) {
       const id = `${cand.harness}:${cand.dir}`;
       const template = this.probeable.get(id);
-      if (!template || !(all || list.includes(id))) {
+      if (!template || !targets.includes(id)) {
         still.push(cand);
         continue;
       }
@@ -431,7 +475,6 @@ export class MockServer {
       });
     }
     this.state.unprobed = still;
-    return ok(this.snapshot());
   }
 
   private analyse(contextId: string): MockResponse {

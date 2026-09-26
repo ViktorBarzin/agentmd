@@ -188,8 +188,9 @@
     layingOut = true;
     const opts: FcoseLayoutOptions = {
       name: 'fcose',
-      // 'proof' is the quality that makes room for labels; it stays quick for a few hundred files.
-      quality: cy.nodes().length <= 400 ? 'proof' : 'default',
+      // 'proof' makes room for labels but costs about 1.5 s at 300 files, so
+      // larger graphs use the faster default.
+      quality: cy.nodes().length <= 150 ? 'proof' : 'default',
       randomize: true,
       animate: false,
       fit: true,

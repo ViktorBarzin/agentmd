@@ -50,8 +50,9 @@ describe('fixture', () => {
 
   it('refers only to files and contexts that exist', () => {
     const ctxIds = new Set(state.contexts.map((c) => c.id));
-    for (const c of state.contexts) {
-      for (const e of c.entries) expect(files.has(e.fileId), `${c.id} ${e.fileId}`).toBe(true);
+    for (const c of [...state.contexts, ...fx.probeable.values()]) {
+      for (const e of [...c.entries, ...(c.skipped ?? [])]) expect(files.has(e.fileId), `${c.id} ${e.fileId}`).toBe(true);
+      for (const e of c.skipped ?? []) expect(e.reason, e.fileId).toBeTruthy();
       for (const i of [...c.skills, ...c.subagents]) if (i.fileId) expect(files.has(i.fileId), i.fileId).toBe(true);
     }
     for (const f of state.findings) for (const c of f.contexts ?? []) expect(ctxIds.has(c), c).toBe(true);
@@ -95,10 +96,11 @@ describe('fixture', () => {
     expect(files.get(P.terraform)?.harnesses).toEqual([]);
   });
 
-  it('leaves webapp/AGENTS.md out of the Claude Code context in webapp', () => {
+  it('leaves webapp/AGENTS.md out of the Claude Code context in webapp, saying why', () => {
     const c = state.contexts.find((x) => x.id === CTX.claudeWebapp);
     expect(c?.entries.map((e) => e.fileId)).toEqual([P.orgClaude, P.userClaude, P.codeClaude]);
-    expect(contextMembers(c ?? state.contexts[0], state.refs).has(P.webappAgents)).toBe(false);
+    expect(c?.skipped?.map((e) => e.fileId)).toEqual([P.webappAgents]);
+    expect(contextMembers(c ?? state.contexts[0], state.refs).get(P.webappAgents)?.role).toBe('skipped');
   });
 
   it('has four problems and three hints, two of them from analysis', () => {

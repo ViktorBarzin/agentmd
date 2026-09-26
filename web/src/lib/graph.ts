@@ -103,6 +103,7 @@ export function buildGraph(state: State, opts: GraphOptions, counts?: Map<string
   const positions = new Map<string, number[]>();
   if (opts.context && opts.members) {
     for (const [id, m] of opts.members) {
+      if (m.role === 'skipped') continue;
       const node = resolve(id);
       memberNodes.add(node);
       if (m.role === 'entry' && m.position !== undefined) {

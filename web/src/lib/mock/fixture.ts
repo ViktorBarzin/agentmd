@@ -358,6 +358,12 @@ export function buildFixture(now: number = Date.now()): Fixture {
     };
   };
 
+  const skippedByClaude = (fileId: string): ContextEntry => ({
+    fileId,
+    bytes: sizeOf(fileId),
+    reason: 'Claude Code skips AGENTS.md when a CLAUDE.md exists further up (~/code/CLAUDE.md).',
+  });
+
   const orgC = entry(P.orgClaude, 'Org policy');
   const orgX = entry(P.orgCodex, 'Org policy (developer message)');
   const userC = entry(P.userClaude, 'User instructions');
@@ -387,20 +393,34 @@ export function buildFixture(now: number = Date.now()): Fixture {
     probed(CTX.codexInfra, [orgX, userX, infraCut]),
     statik(CTX.agentsInfra, [doc(P.infraAgents)]),
     probed(CTX.claudeWebapp, [orgC, userC, project(P.codeClaude)], {
+      skipped: [skippedByClaude(P.webappAgents)],
       analysis: { at: iso(now - 2 * 86400_000), cli: 'claude', findings: 0, stale: true },
     }),
     probed(CTX.codexFrontend, [orgX, userX, doc(P.webappAgents), doc(P.webappFrontend)]),
     statik(CTX.agentsFrontend, [doc(P.webappAgents), doc(P.webappFrontend)]),
     probed(CTX.claudeTripit, [orgC, userC, project(P.codeClaude), project(P.tripitClaude)]),
-    probed(CTX.codexTripit, [orgX, userX, doc(P.tripitAgents)]),
+    // tripit/AGENTS.md changed since this probe, so it may be out of date.
+    probed(CTX.codexTripit, [orgX, userX, doc(P.tripitAgents)], { stale: true }),
     statik(CTX.agentsTripit, [doc(P.tripitAgents)]),
   ];
 
   // Two directories nobody has probed yet. Claude Code and Codex contexts only
-  // exist once probed, so these are candidates until then.
+  // exist once probed, so these are candidates until then. Probing the Codex
+  // one fails, to show a per-context error.
   const probeable = new Map<string, RuntimeContext>([
-    [CTX.claudeFrontend, probed(CTX.claudeFrontend, [orgC, userC, project(P.codeClaude)])],
-    [CTX.codexWebapp, probed(CTX.codexWebapp, [orgX, userX, doc(P.webappAgents)])],
+    [
+      CTX.claudeFrontend,
+      probed(CTX.claudeFrontend, [orgC, userC, project(P.codeClaude)], {
+        skipped: [skippedByClaude(P.webappAgents), skippedByClaude(P.webappFrontend)],
+      }),
+    ],
+    [
+      CTX.codexWebapp,
+      probed(CTX.codexWebapp, [], {
+        skills: [],
+        error: 'codex debug prompt-input exited with status 1: config.toml has an unknown key "sandbox_mod" in profile "work"',
+      }),
+    ],
   ]);
   const unprobed = [...probeable.values()].map((c) => ({ harness: c.harness, dir: c.dir, display: c.display }));
 

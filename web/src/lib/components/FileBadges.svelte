@@ -34,6 +34,8 @@
         return 'skill';
       case 'subagent':
         return 'subagent';
+      case 'skipped':
+        return 'skipped here';
     }
     return '';
   });
@@ -48,6 +50,8 @@
         return `Loads at position ${member.position} in ${where}, through a link`;
       case 'source':
         return `Edits to what loads at position ${member.position} in ${where} belong here`;
+      case 'skipped':
+        return member.reason ?? `Not loaded in ${where}`;
       default:
         return `Offered in ${where}`;
     }
@@ -59,7 +63,9 @@
     <span class="badge accent" title="Unsaved changes">unsaved</span>
   {/if}
   {#if member}
-    <span class="badge accent" title={memberTitle}>{memberLabel}</span>
+    <span class="badge" class:accent={member.role !== 'skipped'} class:warn={member.role === 'skipped'} title={memberTitle}>
+      {memberLabel}
+    </span>
   {/if}
   {#if file.isLink}
     <span class="badge mono" title={`This path links to ${file.linkTarget ?? file.realPath}`}>

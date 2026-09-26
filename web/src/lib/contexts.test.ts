@@ -4,8 +4,11 @@ import {
   candidateId,
   contextMembers,
   contextsLoading,
+  contextsSkipping,
   groupContexts,
   loadRefs,
+  probeBacklog,
+  probeProgress,
 } from './contexts';
 import { ctx, ref, state } from './test-helpers';
 import type { Job } from './types';
@@ -78,6 +81,18 @@ describe('contextMembers', () => {
     expect(members.size).toBe(11);
   });
 
+  it('adds skipped files last, with their reason', () => {
+    const c = ctx('claude:/home/alex/code/webapp', [org], {
+      skipped: [
+        { fileId: '/home/alex/code/webapp/AGENTS.md', bytes: 10, reason: 'A CLAUDE.md sits further up.' },
+        { fileId: org, bytes: 10 },
+      ],
+    });
+    const m = contextMembers(c, refs);
+    expect(m.get('/home/alex/code/webapp/AGENTS.md')).toEqual({ role: 'skipped', reason: 'A CLAUDE.md sits further up.' });
+    expect(m.get(org)).toEqual({ role: 'entry', position: 1 });
+  });
+
   it('survives a symlink cycle', () => {
     const loop = [ref('/a', '/b', 'symlink'), ref('/b', '/a', 'symlink')];
     const m = contextMembers(ctx('claude:/', ['/a']), loop);
@@ -131,6 +146,35 @@ describe('groupContexts', () => {
       ['codex', 0, ['/home/alex/code/webapp']],
     ]);
     expect(candidateId(groups[1].unprobed[0])).toBe('codex:/home/alex/code/webapp');
+  });
+});
+
+describe('probing', () => {
+  const skipping = ctx('claude:/home/alex/code/webapp', [org, userLink], {
+    skipped: [{ fileId: '/home/alex/code/webapp/AGENTS.md', bytes: 900, reason: 'A CLAUDE.md sits further up.' }],
+    stale: true,
+  });
+
+  it('finds the contexts that skipped a file, with the reason', () => {
+    const got = contextsSkipping('/home/alex/code/webapp/AGENTS.md', [claudeInfra, skipping]);
+    expect(got.map((s) => [s.context.id, s.entry.reason])).toEqual([['claude:/home/alex/code/webapp', 'A CLAUDE.md sits further up.']]);
+    expect(contextsSkipping(infra, [claudeInfra, skipping])).toEqual([]);
+  });
+
+  it('counts what Probe all would probe', () => {
+    const s = state({
+      contexts: [claudeInfra, skipping, ctx('agents-md:/x', [], { source: 'static', stale: true })],
+      unprobed: [{ harness: 'codex', dir: '/x', display: '/x' }],
+    });
+    expect(probeBacklog(s)).toEqual({ unprobed: 1, stale: 1 });
+  });
+
+  it('describes a running probe job', () => {
+    const job: Job = { id: 'p', kind: 'probe', status: 'running', startedAt: '', done: 37, total: 142 };
+    expect(probeProgress(job)).toBe('Probing 37 of 142');
+    expect(probeProgress({ ...job, done: undefined, total: undefined })).toBe('Probing');
+    expect(probeProgress({ ...job, done: 150 })).toBe('Probing 142 of 142');
+    expect(probeProgress({ ...job, status: 'done' })).toBe('');
   });
 });
 

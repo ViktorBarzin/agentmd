@@ -2,6 +2,7 @@
   import { formatBytes, formatCount, relativeTime } from '../format';
   import { store } from '../store.svelte';
   import type { RuntimeContext } from '../types';
+  import InlineText from './InlineText.svelte';
 
   interface Props {
     context: RuntimeContext;
@@ -29,6 +30,18 @@
   {#if context.error}
     <p class="banner error">The probe failed: {context.error}</p>
   {/if}
+  {#if context.stale && context.source === 'probe'}
+    <div class="banner warn stale">
+      <div class="banner-body">
+        A file this context loads changed since the probe, so the list below may be out of date.
+        <div class="banner-actions">
+          <button class="btn small" disabled={store.isProbing(context.id)} onclick={() => store.probe([context.id])}>
+            {#if store.isProbing(context.id)}<span class="spinner"></span>Probing{:else}Probe again{/if}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
   {#if context.entries.length === 0}
     <p class="muted">Nothing loads here at session start.</p>
   {:else}
@@ -49,6 +62,19 @@
       {/each}
     </ol>
     <div class="total faint">{formatBytes(context.bytes)} in total</div>
+  {/if}
+  {#if context.skipped?.length}
+    <div class="skipped">
+      <div class="faint sub">Not loaded here</div>
+      <ul>
+        {#each context.skipped as e (e.fileId)}
+          <li>
+            <a class="mono" href={store.hrefFor(store.fileRoute(e.fileId))}>{files?.get(e.fileId)?.display ?? e.fileId}</a>
+            {#if e.reason}<span class="faint reason"><InlineText text={e.reason} /></span>{/if}
+          </li>
+        {/each}
+      </ul>
+    </div>
   {/if}
   {#if context.skills.length || context.subagents.length}
     <div class="offers">
@@ -144,6 +170,39 @@
     margin-top: 2px;
     font-size: 12px;
     text-align: right;
+  }
+  .stale {
+    margin: 4px 0 6px;
+  }
+  .skipped {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+  .skipped .sub {
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+  .skipped ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: 2px;
+  }
+  .skipped li {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 8px;
+    font-size: 12.5px;
+  }
+  .skipped a {
+    font-size: 12.5px;
+    color: var(--text-2);
+    overflow-wrap: anywhere;
+  }
+  .reason {
+    font-size: 12px;
   }
   .offers {
     display: flex;

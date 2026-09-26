@@ -1,7 +1,8 @@
 // App state shared by every view: the scanned State, the route, the picked
 // context, running jobs and unsaved drafts.
 import { api, errorMessage } from './api';
-import { contextMembers, type Membership } from './contexts';
+import { contextMembers, probeProgress, type Membership } from './contexts';
+import { plural } from './format';
 import { EMPTY_FILTERS, filterFindings, isCompare } from './findings';
 import { indexState, type StateIndex } from './model';
 import { backgroundView, closeEditor, formatRoute, parseRoute, withContext, type FileRoute, type Route } from './route';
@@ -18,6 +19,12 @@ export interface Toast {
   id: number;
   text: string;
   tone: 'info' | 'ok' | 'error';
+}
+
+export interface ProbeRun {
+  job: Job;
+  /** The contexts asked for; empty for every unprobed and stale one. */
+  ids: string[];
 }
 
 export const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -52,8 +59,13 @@ class AppStore {
   toasts = $state.raw<Toast[]>([]);
   /** The finding whose fix proposal dialog is open. */
   proposalFor = $state<string | null>(null);
-  /** Context ids being probed, or "*" while every context is. */
-  probing = $state.raw<ReadonlySet<string>>(new Set());
+  /** Probe jobs in flight, with the contexts each asked for (none: all). */
+  probeRuns = $state.raw<ProbeRun[]>([]);
+  /** The "probe all" job, while one runs. */
+  probeAllRun = $derived<ProbeRun | null>(this.probeRuns.find((r) => r.ids.length === 0) ?? null);
+  probingAll = $derived(this.probeAllRun !== null);
+  /** "Probing 3 of 12" while any probe job runs, for status lines. */
+  probeStatus = $derived(this.probeRuns.length ? probeProgress((this.probeAllRun ?? this.probeRuns[0]).job) : '');
   /** Saves the editor that last had focus, for Ctrl/Cmd+S outside CodeMirror. */
   activeSave: (() => void) | null = null;
 
@@ -177,25 +189,41 @@ class AppStore {
   }
 
   /**
-   * Probes the given contexts, or every Claude Code and Codex context when the
-   * list is empty. Returns whether the probe worked.
+   * Probes the given contexts, or every unprobed and stale one when the list
+   * is empty. The server runs a job; this polls it for progress and fetches
+   * the state when it ends. Returns whether the job finished.
    */
   async probe(ids: string[] = []): Promise<boolean> {
-    const keys = ids.length ? ids : ['*'];
-    if (this.probing.has('*') || keys.some((k) => this.probing.has(k))) return false;
-    this.probing = new Set([...this.probing, ...keys]);
+    if (this.probingAll || (ids.length > 0 && ids.every((id) => this.isProbing(id)))) return false;
+    let job: Job;
     try {
-      this.data = await api.probe(ids);
-      const what = ids.length === 0 ? 'every context' : ids.length === 1 ? this.contextLabel(ids[0]) : `${ids.length} contexts`;
-      this.toast(`Probed ${what}.`, 'ok');
+      job = await api.probe(ids);
+    } catch (e) {
+      this.toast(`The probe did not start: ${errorMessage(e)}`, 'error');
+      return false;
+    }
+    this.probeRuns = [...this.probeRuns, { job, ids }];
+    const update = (j: Job) => {
+      this.probeRuns = this.probeRuns.map((r) => (r.job.id === j.id ? { ...r, job: j } : r));
+    };
+    try {
+      const done = await waitForJob(job, update);
+      await this.refresh();
+      if (done.status === 'error') {
+        this.toast(`The probe failed: ${done.error ?? 'no context could be probed'}`, 'error');
+        return false;
+      }
+      const failed = (this.data?.contexts ?? []).filter((c) => c.error && (ids.length === 0 || ids.includes(c.id)));
+      const what = ids.length === 1 ? this.contextLabel(ids[0]) : plural(done.total ?? ids.length, 'context');
+      if (done.total === 0) this.toast('Nothing to probe: every context is up to date.', 'info');
+      else if (failed.length) this.toast(`Probed ${what}; ${plural(failed.length, 'probe')} failed.`, 'error');
+      else this.toast(`Probed ${what}.`, 'ok');
       return true;
     } catch (e) {
       this.toast(`The probe failed: ${errorMessage(e)}`, 'error');
       return false;
     } finally {
-      const next = new Set(this.probing);
-      for (const k of keys) next.delete(k);
-      this.probing = next;
+      this.probeRuns = this.probeRuns.filter((r) => r.job.id !== job.id);
     }
   }
 
@@ -206,7 +234,7 @@ class AppStore {
   }
 
   isProbing(id: string): boolean {
-    return this.probing.has('*') || this.probing.has(id);
+    return this.probeRuns.some((r) => r.ids.length === 0 || r.ids.includes(id));
   }
 
   /** Rescans when the tab regains focus, at most once every 10 seconds. */

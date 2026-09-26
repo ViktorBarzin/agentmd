@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { candidateId, groupContexts } from '../contexts';
+  import { candidateId, groupContexts, probeBacklog } from '../contexts';
   import { plural } from '../format';
   import { store } from '../store.svelte';
   import type { Candidate, RuntimeContext } from '../types';
@@ -21,7 +21,7 @@
   }
 
   const groups = $derived(store.data ? groupContexts(store.data) : []);
-  const unprobedCount = $derived(store.data?.unprobed?.length ?? 0);
+  const backlog = $derived(store.data ? probeBacklog(store.data) : { unprobed: 0, stale: 0 });
 
   const visibleGroups = $derived.by(() => {
     const q = filter.trim().toLowerCase();
@@ -80,7 +80,7 @@
 
   function probeAll() {
     hide();
-    void store.probe((store.data?.unprobed ?? []).map(candidateId));
+    void store.probe();
   }
 
   function move(delta: number) {
@@ -211,6 +211,7 @@
               >
                 <span class="dir mono">{c.display}</span>
                 <span class="tag" class:static={c.source === 'static'}>{c.source === 'probe' ? 'probed' : 'static'}</span>
+                {#if c.stale}<span class="tag none" title="A file this context loads changed since the probe">stale</span>{/if}
                 <span class="meta">
                   {#if c.error}<span class="error-text">error</span>{:else}{plural(c.entries.length, 'file')}{/if}
                 </span>
@@ -241,10 +242,23 @@
           <div class="no-match">No context matches.</div>
         {/each}
       </div>
-      {#if unprobedCount > 0}
+      {#if backlog.unprobed + backlog.stale > 0 || store.probingAll}
         <div class="foot">
-          <span class="faint">{plural(unprobedCount, 'directory', 'directories')} not probed yet</span>
-          <button type="button" class="btn small" onclick={probeAll} disabled={store.probing.size > 0}>Probe all</button>
+          <span class="faint">
+            {#if store.probingAll}
+              {store.probeStatus}
+            {:else}
+              {[
+                backlog.unprobed ? `${plural(backlog.unprobed, 'directory', 'directories')} not probed` : '',
+                backlog.stale ? `${backlog.stale} stale` : '',
+              ]
+                .filter(Boolean)
+                .join(', ')}
+            {/if}
+          </span>
+          <button type="button" class="btn small" onclick={probeAll} disabled={store.probingAll}>
+            {#if store.probingAll}<span class="spinner"></span>{/if}Probe all
+          </button>
         </div>
       {/if}
     </div>

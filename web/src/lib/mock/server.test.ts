@@ -161,6 +161,22 @@ describe('MockServer pushes', () => {
   });
 });
 
+describe('MockServer at scale', () => {
+  it('grows to about 300 files and 500 references with consistent ids', () => {
+    const big = new MockServer(() => t, 70);
+    const s = big.handle('GET', '/state', new URLSearchParams(), undefined).body as State;
+    const ids = new Set(s.files.map((f) => f.id));
+    expect(s.files.length).toBeGreaterThanOrEqual(300);
+    const loadRefs = s.contexts.reduce((n, c) => n + Math.max(0, c.entries.length - 1), 0);
+    expect(s.refs.length + loadRefs).toBeGreaterThanOrEqual(500);
+    expect(ids.size).toBe(s.files.length);
+    for (const r of s.refs) expect(ids.has(r.from) && (r.dangling || ids.has(r.to)), `${r.from} -> ${r.to}`).toBe(true);
+    for (const c of s.contexts) for (const e of c.entries) expect(ids.has(e.fileId), e.fileId).toBe(true);
+    const file = big.handle('GET', '/file', new URLSearchParams({ id: '/home/alex/code/lab/p010/CLAUDE.md' }), undefined);
+    expect((file.body as FileResponse).content).toContain('# p010');
+  });
+});
+
 describe('MockServer probes', () => {
   it('lists unprobed directories apart from the contexts', () => {
     const s = getState();
@@ -168,19 +184,55 @@ describe('MockServer probes', () => {
     expect(s.contexts.some((c) => c.id === CTX.claudeFrontend || c.id === CTX.codexWebapp)).toBe(false);
   });
 
-  it('turns one candidate into a probed context', () => {
-    t += 1000;
-    const s = call<State>('POST', '/probe', { contexts: [CTX.claudeFrontend] }).body;
+  const runProbe = (contexts: string[]) => {
+    const job = call<Job>('POST', '/probe', { contexts }).body;
+    expect(job).toMatchObject({ kind: 'probe', status: 'running', done: 0 });
+    t += 1600;
+    const mid = call<Job>('GET', `/jobs/${job.id}`).body;
+    t += 1500;
+    const end = call<Job>('GET', `/jobs/${job.id}`).body;
+    return { job, mid, end, state: getState() };
+  };
+
+  it('turns one candidate into a probed context through a job', () => {
+    const { job, mid, end, state: s } = runProbe([CTX.claudeFrontend]);
+    expect(job.total).toBe(1);
+    expect(mid.status).toBe('running');
+    expect(end).toMatchObject({ status: 'done', done: 1, total: 1 });
     const c = s.contexts.find((x) => x.id === CTX.claudeFrontend);
     expect(c).toMatchObject({ source: 'probe', harness: 'claude', probedAt: new Date(t).toISOString() });
     expect(c?.entries.map((e) => e.fileId)).toEqual([P.orgClaude, P.userClaude, P.codeClaude]);
+    expect(c?.skipped?.map((e) => e.fileId)).toEqual([P.webappAgents, P.webappFrontend]);
+    expect(c?.skipped?.[0].reason).toContain('CLAUDE.md');
     expect(s.unprobed?.map((x) => x.dir)).toEqual(['/home/alex/code/webapp']);
   });
 
-  it('probes every candidate when the list is empty', () => {
-    const s = call<State>('POST', '/probe', { contexts: [] }).body;
+  it('probes every unprobed and stale context when the list is empty, counting up', () => {
+    const { job, mid, end, state: s } = runProbe([]);
+    expect(job.total).toBe(3);
+    expect(mid.done).toBe(1);
+    expect(end).toMatchObject({ status: 'done', done: 3 });
     expect(s.unprobed).toEqual([]);
-    expect(s.contexts.some((c) => c.id === CTX.codexWebapp)).toBe(true);
+    expect(s.contexts.find((c) => c.id === CTX.codexTripit)?.stale).toBeUndefined();
+    const failed = s.contexts.find((c) => c.id === CTX.codexWebapp);
+    expect(failed?.error).toContain('exited with status 1');
+    expect(failed?.entries).toEqual([]);
+  });
+
+  it('finishes at once when nothing needs probing, and refuses unknown ids', () => {
+    runProbe([]);
+    const job = call<Job>('POST', '/probe', { contexts: [] }).body;
+    expect(job.total).toBe(0);
+    expect(call<Job>('GET', `/jobs/${job.id}`).body.status).toBe('done');
+    expect(call('POST', '/probe', { contexts: ['claude:/nowhere'] }).status).toBe(404);
+  });
+
+  it('marks a probed context stale when a file it loaded changes', () => {
+    const f = getFile(P.tripitAgents);
+    call('PUT', '/file', { id: P.tripitAgents, content: f.content + 'x\n', baseHash: f.file.hash });
+    const s = getState();
+    expect(s.contexts.find((c) => c.id === CTX.claudeTripit)?.stale).toBe(true);
+    expect(s.contexts.find((c) => c.id === CTX.claudeInfra)?.stale).toBeUndefined();
   });
 });
 
@@ -252,10 +304,11 @@ describe('MockServer jobs', () => {
     expect(call('POST', '/fix', { findingId: 'dup-core-infra' }).status).toBe(400);
   });
 
-  it('records a probe time for probed contexts only', () => {
-    t += 60_000;
-    const s = call<State>('POST', '/probe', { contexts: [CTX.claudeInfra] }).body;
-    for (const c of s.contexts) {
+  it('records a probe time for the probed context only', () => {
+    const job = call<Job>('POST', '/probe', { contexts: [CTX.claudeInfra] }).body;
+    t += 3100;
+    expect(call<Job>('GET', `/jobs/${job.id}`).body.status).toBe('done');
+    for (const c of getState().contexts) {
       if (c.id === CTX.claudeInfra) expect(c.probedAt).toBe(new Date(t).toISOString());
       else if (c.source === 'probe') expect(c.probedAt).not.toBe(new Date(t).toISOString());
       else expect(c.probedAt).toBeUndefined();

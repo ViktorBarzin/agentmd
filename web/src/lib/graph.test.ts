@@ -125,6 +125,12 @@ describe('buildGraph', () => {
     expect(docEdge?.classes).toContain('dim');
   });
 
+  it('dims files the harness skipped in the picked context', () => {
+    const skipping = { ...claudeInfra, skipped: [{ fileId: doc, bytes: 1, reason: 'not an instruction file' }] };
+    const g = buildGraph(s, opts({ context: skipping, members: contextMembers(skipping, s.refs) }));
+    expect(g.nodes.find((n) => n.data.id === doc)?.classes).toContain('dim');
+  });
+
   it('carries load positions onto the target when links are collapsed', () => {
     const members = contextMembers(claudeInfra, s.refs);
     const g = buildGraph(s, opts({ context: claudeInfra, members, collapseLinks: true }));

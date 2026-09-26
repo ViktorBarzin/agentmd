@@ -49,7 +49,8 @@ export interface Api {
   git(id: string): Promise<GitResponse>;
   commit(req: CommitRequest): Promise<CommitResponse>;
   push(req: PushRequest): Promise<PushResponse>;
-  probe(contexts: string[]): Promise<State>;
+  /** Starts probing these contexts, or every unprobed and stale one when empty. */
+  probe(contexts: string[]): Promise<Job>;
   analyse(context: string): Promise<Job>;
   fix(findingId: string): Promise<Job>;
   job(id: string): Promise<Job>;
@@ -106,7 +107,7 @@ export function createApi(fetchFn: FetchFn = (input, init) => globalThis.fetch(i
     git: (id) => call<GitResponse>('GET', `git?id=${q(id)}`),
     commit: (req) => call<CommitResponse>('POST', 'commit', req),
     push: (req) => call<PushResponse>('POST', 'push', req),
-    probe: (contexts) => call<State>('POST', 'probe', { contexts }),
+    probe: (contexts) => call<Job>('POST', 'probe', { contexts }),
     analyse: (context) => call<Job>('POST', 'analyse', { context }),
     fix: (findingId) => call<Job>('POST', 'fix', { findingId }),
     job: (id) => call<Job>('GET', `jobs/${q(id)}`),

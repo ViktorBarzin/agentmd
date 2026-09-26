@@ -1,9 +1,11 @@
 <script lang="ts">
+  import { contextsSkipping } from '../contexts';
   import { KIND_LABELS, findingsForFile, sortFindings } from '../findings';
   import { formatBytes, formatCount, lineRange, shortenHome } from '../format';
   import { REF_KIND_LABELS } from '../graph';
   import { store } from '../store.svelte';
   import type { AgentFile, Ref } from '../types';
+  import InlineText from './InlineText.svelte';
 
   interface Props {
     file: AgentFile;
@@ -22,6 +24,7 @@
     ...links.flatMap((link) => (ix?.loadedIn.get(link) ?? []).map((l) => ({ ...l, via: link }))),
   ]);
   const findings = $derived(sortFindings(findingsForFile(store.data?.findings ?? [], file.id), ix?.files ?? new Map()));
+  const skipped = $derived(contextsSkipping(file.id, store.data?.contexts ?? []));
   const harnessLabel = (name: string) => store.data?.harnesses.find((h) => h.name === name)?.label ?? name;
 
   function refTarget(r: Ref, side: 'from' | 'to'): string {
@@ -155,6 +158,22 @@
       </ul>
     {/if}
   </section>
+
+  {#if skipped.length}
+    <section>
+      <h3>Skipped in</h3>
+      <ul>
+        {#each skipped as s (s.context.id)}
+          <li class="skip">
+            <a href={store.hrefFor({ ...store.fileRoute(file.id), ctx: s.context.id })}>
+              {harnessLabel(s.context.harness)} <span class="mono">{s.context.display}</span>
+            </a>
+            {#if s.entry.reason}<span class="faint"><InlineText text={s.entry.reason} /></span>{/if}
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
 
   <section>
     <h3>Findings</h3>

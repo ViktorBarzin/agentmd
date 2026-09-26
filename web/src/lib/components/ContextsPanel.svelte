@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { analysisStatus, candidateId, groupContexts } from '../contexts';
+  import { analysisStatus, candidateId, groupContexts, probeBacklog } from '../contexts';
   import { formatTime, plural, relativeTime } from '../format';
   import { store } from '../store.svelte';
   import Icon from './Icon.svelte';
@@ -11,8 +11,9 @@
 
   const groups = $derived(store.data ? groupContexts(store.data) : []);
   const cli = $derived(store.data?.analysis ?? '');
-  const probingAll = $derived(store.probing.has('*'));
   const hasProbed = $derived(groups.some((g) => g.probe));
+  const backlog = $derived(store.data ? probeBacklog(store.data) : { unprobed: 0, stale: 0 });
+  const waiting = $derived(backlog.unprobed + backlog.stale);
 </script>
 
 <section class="contexts" aria-labelledby="contexts-title">
@@ -22,11 +23,16 @@
       <button
         class="btn small"
         onclick={() => store.probe()}
-        disabled={store.probing.size > 0}
-        title="Start Claude Code and Codex in every directory to record what they load"
+        disabled={store.probingAll || waiting === 0}
+        title={waiting === 0
+          ? 'Every Claude Code and Codex context is probed and up to date'
+          : 'Probe every directory not probed yet, and every stale context'}
       >
-        {#if probingAll}<span class="spinner"></span>{:else}<Icon name="probe" size={14} />{/if}
-        Probe all
+        {#if store.probingAll}
+          <span class="spinner"></span>{store.probeStatus}
+        {:else}
+          <Icon name="probe" size={14} />Probe all{waiting ? ` (${waiting})` : ''}
+        {/if}
       </button>
     {/if}
   </header>
@@ -55,9 +61,10 @@
               {c.display}
             </button>
             <span class="tag" class:static={c.source === 'static'}>{c.source === 'probe' ? 'probed' : 'static'}</span>
+            {#if c.stale}<span class="tag none" title="A file this context loads changed since the probe">stale</span>{/if}
             <button
               class="btn small action"
-              disabled={!cli || status.state === 'running'}
+              disabled={!cli || status.state === 'running' || Boolean(c.error)}
               aria-describedby={cli ? undefined : helpId}
               aria-label={`Analyse ${g.label} in ${c.display}`}
               onclick={() => store.analyse(c.id)}
@@ -66,6 +73,14 @@
               Analyse
             </button>
           </div>
+          {#if c.stale && c.source === 'probe'}
+            <div class="status stale">
+              A file changed since the probe {relativeTime(c.probedAt, store.now)}.
+              <button class="link-btn" disabled={store.isProbing(c.id)} onclick={() => store.probe([c.id])}>
+                {store.isProbing(c.id) ? 'Probing' : 'Probe again'}
+              </button>
+            </div>
+          {/if}
           <div class="status">
             {#if c.error}
               <span class="error-text">The probe failed: {c.error}</span>
@@ -216,5 +231,19 @@
   }
   .stale {
     color: var(--hint-text);
+  }
+  .link-btn {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--accent-text);
+    font-size: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+  }
+  .link-btn:disabled {
+    color: var(--text-3);
+    cursor: default;
+    text-decoration: none;
   }
 </style>
