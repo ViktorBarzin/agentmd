@@ -395,6 +395,11 @@ func LoadClaudeState(path string) ClaudeState {
 	var flagKeys []string
 	for k := range top {
 		lk := strings.ToLower(k)
+		// Timestamps such as cachedGrowthBookFeaturesAt change on every
+		// refresh without changing any flag, so they are left out.
+		if strings.HasSuffix(k, "At") || strings.HasSuffix(lk, "time") || strings.HasSuffix(lk, "timestamp") {
+			continue
+		}
 		if strings.Contains(lk, "growthbook") || strings.Contains(lk, "statsig") || strings.Contains(lk, "feature") || strings.Contains(lk, "gate") {
 			flagKeys = append(flagKeys, k)
 		}
@@ -403,7 +408,7 @@ func LoadClaudeState(path string) ClaudeState {
 	h := sha256.New()
 	for _, k := range flagKeys {
 		h.Write([]byte(k))
-		h.Write(top[k])
+		h.Write(canonical(top[k]))
 	}
 	st.Flags = hex.EncodeToString(h.Sum(nil))
 	var projects map[string]map[string]json.RawMessage
@@ -419,6 +424,20 @@ func LoadClaudeState(path string) ClaudeState {
 		}
 	}
 	return st
+}
+
+// canonical re-encodes JSON with sorted keys, so a rewrite that only
+// reorders keys does not change the hash.
+func canonical(raw json.RawMessage) []byte {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return raw
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // Stats caches file stats for one scan.

@@ -181,3 +181,19 @@ func TestFingerprint(t *testing.T) {
 		t.Error("a file in an unrelated folder does not change the fingerprint")
 	}
 }
+
+func TestClaudeStateIgnoresRefreshTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, ".claude.json")
+	os.WriteFile(p, []byte(`{"cachedGrowthBookFeatures":{"a":1,"b":{"c":true}},"cachedGrowthBookFeaturesAt":1000,"numStartups":5}`), 0o600)
+	a := harness.LoadClaudeState(p)
+	os.WriteFile(p, []byte(`{"numStartups":6,"cachedGrowthBookFeaturesAt":2000,"cachedGrowthBookFeatures":{"b":{"c":true},"a":1}}`), 0o600)
+	b := harness.LoadClaudeState(p)
+	if a.Flags != b.Flags {
+		t.Error("a refresh that only moves the timestamp or reorders keys keeps the same flags hash")
+	}
+	os.WriteFile(p, []byte(`{"cachedGrowthBookFeatures":{"a":2,"b":{"c":true}},"cachedGrowthBookFeaturesAt":3000}`), 0o600)
+	if harness.LoadClaudeState(p).Flags == a.Flags {
+		t.Error("a changed flag changes the hash")
+	}
+}
