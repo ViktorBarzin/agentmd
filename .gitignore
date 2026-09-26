@@ -1,0 +1,10 @@
+/agentmd
+/dist/
+/web/node_modules/
+/web/dist/*
+!/web/dist/index.html
+/web/test-results/
+/web/playwright-report/
+*.test
+coverage.out
+.worktrees/
