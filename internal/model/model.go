@@ -206,6 +206,16 @@ type State struct {
 	Contexts  []Context     `json:"contexts"`
 	Findings  []Finding     `json:"findings"`
 	Analysis  string        `json:"analysis,omitempty"` // CLI used for analysis, empty when none
+	// Unprobed lists directories whose Claude Code or Codex context has not
+	// been probed yet.
+	Unprobed []Candidate `json:"unprobed,omitempty"`
+}
+
+// Candidate is a context that could be probed.
+type Candidate struct {
+	Harness string `json:"harness"`
+	Dir     string `json:"dir"`
+	Display string `json:"display"`
 }
 
 // Job is a long-running analysis or fix proposal.

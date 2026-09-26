@@ -4,9 +4,9 @@ The UI and any other client talk to `agentmd serve` over JSON. Types are in
 [`internal/model/model.go`](../internal/model/model.go) and mirrored in
 [`web/src/lib/types.ts`](../web/src/lib/types.ts).
 
-Every request that changes something (every method other than `GET`) must send
-`X-Agentmd-Request: 1` and a JSON body. Errors answer with a non-2xx status and
-`{"error": "..."}`.
+Every `/api` request must send `X-Agentmd-Request: 1`, and every request with a
+body sends JSON. The server never sends CORS headers. Errors answer with a
+non-2xx status and `{"error": "..."}`.
 
 | method and path | body | answer |
 |---|---|---|
@@ -14,8 +14,9 @@ Every request that changes something (every method other than `GET`) must send
 | `POST /api/scan` | `{}` | `State` after a fresh scan |
 | `GET /api/file?id=<id>` | | `{file, content}` |
 | `PUT /api/file` | `{id, content, baseHash}` | `{file, content, repo, diff}`, or 409 `{error, current, hash}` when the file changed on disk since `baseHash` |
-| `GET /api/git?id=<id>` | | `{repo, diff, dirty}` |
+| `GET /api/git?id=<id>` | | `{repo, diff, dirty, branch, upstream, ahead, behind}` |
 | `POST /api/commit` | `{ids, message}` | `{repo, commit, output}` |
+| `POST /api/push` | `{id}` (any file in the repository) | `{repo, branch, upstream, output}`, or 409 with git's refusal |
 | `POST /api/probe` | `{contexts: [ids]}`, empty for all | `State` with the probed contexts |
 | `POST /api/analyse` | `{context}` | `Job` |
 | `POST /api/fix` | `{findingId}` | `Job` |
@@ -29,3 +30,9 @@ Every request that changes something (every method other than `GET`) must send
   or `error`. Analysis findings also appear in the next `State`.
 - `POST /api/apply` saves several files for a fix proposal. It checks every
   `baseHash` before writing any file.
+- `State.unprobed` lists the Claude Code and Codex contexts not probed yet;
+  there is no static stand-in for them.
+- `State.refs` holds symlink, build and mention references. Load-order
+  references follow from each context's `entries`, in order.
+- `POST /api/push` only fast-forwards the current branch to its upstream. It
+  never rebases, merges or forces.

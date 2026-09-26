@@ -9,11 +9,14 @@ when asked, and results are cached by the content of the files analysed.
 
 ## Consequences
 
+- Claude runs with `--setting-sources ""`, so the owner's own instruction files
+  do not load into the analysis, and with the files in `--system-prompt-file`,
+  so they stay out of prompt telemetry where an org records prompts. Both were
+  checked on the devvm, and the normal login still worked.
 - Output quality and cost follow the owner's CLI settings. agentmd asks for JSON
-  through each CLI's schema option and discards any finding whose quoted text is
-  not in the file at the lines it names.
-- The CLI flags agentmd relies on can change between releases. The analysis
-  runner checks the CLI version and reports a clear error when a flag is
-  rejected.
+  through each CLI's schema option, finds each quoted passage in its file to
+  correct the line numbers, and discards findings whose quote is not there.
+- The CLI flags agentmd relies on can change between releases. The runner
+  reports a clear error when a flag is rejected.
 - Without an installed CLI, the deterministic findings still work and the
   analysis buttons explain what is missing.
