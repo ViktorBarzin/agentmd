@@ -235,6 +235,9 @@ func TestEditCommitPushFlow(t *testing.T) {
 	git(t, tr.Root, "init", "-q", "--bare", "-b", "master", origin)
 	app1 := filepath.Join(tr.Code, "app")
 	git(t, tr.Code, "clone", "-q", origin, app1)
+	// agentmd commits with the owner's identity; the test machine may have none.
+	git(t, app1, "config", "user.name", "T")
+	git(t, app1, "config", "user.email", "t@example.com")
 	p := tr.File(filepath.Join(app1, "AGENTS.md"), "# App\nOld rule.\n")
 	tr.Link(filepath.Join(app1, "CLAUDE.md"), "AGENTS.md")
 	git(t, app1, "add", "AGENTS.md", "CLAUDE.md")
