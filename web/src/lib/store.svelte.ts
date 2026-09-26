@@ -1,7 +1,7 @@
 // App state shared by every view: the scanned State, the route, the picked
 // context, running jobs and unsaved drafts.
 import { api, errorMessage } from './api';
-import { contextMembers, probeProgress, type Membership } from './contexts';
+import { contextMembers, probeBacklog, probeProgress, type Membership } from './contexts';
 import { plural } from './format';
 import { EMPTY_FILTERS, filterFindings, isCompare } from './findings';
 import { indexState, type StateIndex } from './model';
@@ -142,6 +142,7 @@ class AppStore {
   async load() {
     this.loading = true;
     this.loadError = null;
+    const first = this.data === null;
     try {
       this.data = await api.state();
       this.focusThrottle.mark();
@@ -150,6 +151,12 @@ class AppStore {
     } finally {
       this.loading = false;
       this.now = Date.now();
+    }
+    // As the plan says, opening the UI probes what has never been probed and
+    // what went stale; a probe starts the harness but never reaches a model.
+    if (first && this.data) {
+      const backlog = probeBacklog(this.data);
+      if (backlog.unprobed + backlog.stale > 0) void this.probe();
     }
   }
 

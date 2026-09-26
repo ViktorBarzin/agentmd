@@ -173,6 +173,7 @@
         aria-label="Filter contexts"
         placeholder="Filter contexts"
         onkeydown={onInputKey}
+        oninput={() => (active = 0)}
       />
       <div class="list" id={`${uid}-list`} role="listbox" aria-label="Contexts">
         {#if !filter.trim()}
