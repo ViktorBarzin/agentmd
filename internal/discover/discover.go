@@ -314,8 +314,19 @@ func (s *scanner) addPlugins(dir string) {
 	})
 }
 
+// harnessSubdirs are the folders a harness reads inside its project folder.
+// Everything else there (Claude Code's worktrees, settings, caches) is skipped.
+var harnessSubdirs = map[string]map[string]bool{
+	".claude": {"rules": true, "skills": true, "agents": true, "commands": true},
+	".agents": {"skills": true},
+	".codex":  {"skills": true, "prompts": true},
+}
+
 func (s *scanner) skipDir(p, name string) bool {
 	if s.exclude[name] {
+		return true
+	}
+	if allowed, ok := harnessSubdirs[filepath.Base(filepath.Dir(p))]; ok && !allowed[name] {
 		return true
 	}
 	if strings.HasPrefix(name, ".") {

@@ -141,6 +141,7 @@ when it starts, when you press rescan, and when its tab regains focus.
 ```sh
 make test                     # go vet, go test, vitest
 make check                    # svelte-check
+make build && (cd web && npm run e2e)   # Playwright against the built binary
 cd web && VITE_MOCK=1 npm run dev   # the UI against a built-in mock
 cd web && npm run dev         # the UI against agentmd serve on :7390
 ```

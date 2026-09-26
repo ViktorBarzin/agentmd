@@ -29,10 +29,11 @@
     show: Record<RefKind, boolean>;
     collapseLinks: boolean;
     hideSkills: boolean;
+    hideIsolated: boolean;
   }
 
   function readOptions(): SavedOptions {
-    const fallback: SavedOptions = { show: { ...DEFAULT_SHOW }, collapseLinks: false, hideSkills: false };
+    const fallback: SavedOptions = { show: { ...DEFAULT_SHOW }, collapseLinks: false, hideSkills: false, hideIsolated: true };
     try {
       const raw = readStored(OPTS_KEY);
       if (!raw) return fallback;
@@ -41,7 +42,12 @@
       const o = v as Partial<SavedOptions>;
       const show = { ...DEFAULT_SHOW };
       for (const k of REF_KINDS) if (typeof o.show?.[k] === 'boolean') show[k] = o.show[k];
-      return { show, collapseLinks: o.collapseLinks === true, hideSkills: o.hideSkills === true };
+      return {
+        show,
+        collapseLinks: o.collapseLinks === true,
+        hideSkills: o.hideSkills === true,
+        hideIsolated: o.hideIsolated !== false,
+      };
     } catch {
       return fallback;
     }
@@ -51,6 +57,7 @@
   let show = $state<Record<RefKind, boolean>>(saved.show);
   let collapseLinks = $state(saved.collapseLinks);
   let hideSkills = $state(saved.hideSkills);
+  let hideIsolated = $state(saved.hideIsolated);
   let legendOpen = $state(false);
   let selectedId = $state<string | null>(null);
   let container: HTMLDivElement | undefined = $state();
@@ -58,7 +65,7 @@
   let layingOut = $state(false);
 
   $effect(() => {
-    writeStored(OPTS_KEY, JSON.stringify({ show, collapseLinks, hideSkills }));
+    writeStored(OPTS_KEY, JSON.stringify({ show, collapseLinks, hideSkills, hideIsolated }));
   });
 
   const model = $derived<GraphModel | null>(
@@ -69,6 +76,8 @@
             show,
             collapseLinks,
             hideSkills,
+            hideIsolated,
+            only: store.harnessSet,
             context: store.context,
             members: store.members,
             query: store.query,
@@ -331,6 +340,9 @@
       </button>
       <button type="button" class="chip" aria-pressed={hideSkills} onclick={() => (hideSkills = !hideSkills)}>
         Hide skills
+      </button>
+      <button type="button" class="chip" aria-pressed={hideIsolated} onclick={() => (hideIsolated = !hideIsolated)}>
+        Hide unconnected files
       </button>
     </div>
     <div class="actions">

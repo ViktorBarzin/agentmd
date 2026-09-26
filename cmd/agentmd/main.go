@@ -98,7 +98,9 @@ func (c *common) register(fs *flag.FlagSet) {
 }
 
 func (c *common) options() app.Options {
-	o := app.Options{Home: c.home}
+	// AGENTMD_NO_CLIS=1 skips looking for claude and codex, and AGENTMD_ETC
+	// replaces /etc, for tests and machines where probing is not wanted.
+	o := app.Options{Home: c.home, Etc: os.Getenv("AGENTMD_ETC"), NoCLIs: os.Getenv("AGENTMD_NO_CLIS") == "1"}
 	for _, r := range c.roots {
 		if abs, err := filepath.Abs(r); err == nil {
 			o.Roots = append(o.Roots, abs)

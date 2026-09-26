@@ -1,8 +1,7 @@
 /agentmd
 /dist/
 /web/node_modules/
-/web/dist/*
-!/web/dist/index.html
+/web/dist/ui/
 /web/test-results/
 /web/playwright-report/
 *.test

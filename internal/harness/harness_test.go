@@ -77,6 +77,9 @@ func TestFromClaude(t *testing.T) {
 	if !reflect.DeepEqual(ids(c.Entries), want) {
 		t.Errorf("entries = %v, want %v", ids(c.Entries), want)
 	}
+	if c.Entries[1].Label != user {
+		t.Errorf("the throwaway config path is not shown: label %q", c.Entries[1].Label)
+	}
 	if c.Bytes != len("# org")+len("# user\n")+len("# code") || c.Source != "probe" || c.ID != "claude:"+app {
 		t.Errorf("bytes %d source %q id %q", c.Bytes, c.Source, c.ID)
 	}

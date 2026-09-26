@@ -21,6 +21,10 @@ export interface GraphOptions {
   show: Record<RefKind, boolean>;
   collapseLinks: boolean;
   hideSkills: boolean;
+  /** Leave out files that no shown reference touches (a picked context's files stay). */
+  hideIsolated: boolean;
+  /** Only these files, from the header's harness filter; null for all. */
+  only?: Set<string> | null;
   context: RuntimeContext | null;
   members: Map<string, Membership> | null;
   query: string;
@@ -96,7 +100,8 @@ export function buildGraph(state: State, opts: GraphOptions, counts?: Map<string
     return cur;
   };
 
-  const hidden = (id: string) => opts.hideSkills && files.get(id)?.kind === 'skill';
+  const hidden = (id: string) =>
+    (opts.hideSkills && files.get(id)?.kind === 'skill') || (opts.only ? !opts.only.has(id) : false);
 
   // Context membership, carried through collapsed links.
   const memberNodes = new Set<string>();
@@ -213,6 +218,17 @@ export function buildGraph(state: State, opts: GraphOptions, counts?: Map<string
       },
       classes: [`ref-${r.kind}`],
     });
+  }
+
+  if (opts.hideIsolated) {
+    const touched = new Set<string>();
+    for (const e of edges.values()) {
+      touched.add(e.data.source);
+      touched.add(e.data.target);
+    }
+    for (const id of [...nodes.keys()]) {
+      if (!touched.has(id) && !memberNodes.has(id)) nodes.delete(id);
+    }
   }
 
   if (opts.context) {

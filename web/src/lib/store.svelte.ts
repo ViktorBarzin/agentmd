@@ -4,8 +4,10 @@ import { api, errorMessage } from './api';
 import { contextMembers, probeBacklog, probeProgress, type Membership } from './contexts';
 import { plural } from './format';
 import { EMPTY_FILTERS, filterFindings, isCompare } from './findings';
+import { harnessFiles } from './harness';
 import { indexState, type StateIndex } from './model';
 import { backgroundView, closeEditor, formatRoute, parseRoute, withContext, type FileRoute, type Route } from './route';
+import { readStored, writeStored } from './storage';
 import { createThrottle } from './throttle';
 import { matchesQuery } from './tree';
 import type { AgentFile, Finding, Job, RuntimeContext, State } from './types';
@@ -49,6 +51,8 @@ class AppStore {
   scanning = $state(false);
   route = $state.raw<Route>({ name: 'files' });
   query = $state('');
+  /** The header's harness filter; empty for every harness. */
+  harness = $state(readStored('agentmd.harness') ?? '');
   now = $state(Date.now());
   /** The last analysis job started for each context. */
   analyseJobs = $state.raw<Record<string, Job>>({});
@@ -75,26 +79,37 @@ class AppStore {
   members = $derived<Map<string, Membership> | null>(
     this.context && this.data ? contextMembers(this.context, this.data.refs) : null,
   );
-  /** Files that belong to the picked context, or every file. */
+  /** Files the harness filter keeps, or null when it is off. */
+  harnessSet = $derived<Set<string> | null>(this.data && this.harness ? harnessFiles(this.data, this.harness) : null);
+  /** Files that belong to the picked context and harness, or every file. */
   visibleFiles = $derived.by<AgentFile[]>(() => {
     const d = this.data;
     if (!d) return [];
     const m = this.members;
-    return m ? d.files.filter((f) => m.has(f.id)) : d.files;
+    const h = this.harnessSet;
+    return d.files.filter((f) => (!m || m.has(f.id)) && (!h || h.has(f.id)));
   });
-  /** Findings that concern the picked context, or every finding. */
+  /** Findings that concern the picked context and harness, or every finding. */
   contextFindings = $derived.by<Finding[]>(() => {
     const d = this.data;
     const ix = this.index;
     if (!d || !ix) return [];
-    if (!this.context || !this.members) return d.findings;
+    const filters = this.harness ? { ...EMPTY_FILTERS, harnesses: [this.harness] } : EMPTY_FILTERS;
+    if (!this.context || !this.members) {
+      return this.harness ? filterFindings(d.findings, filters, { contexts: ix.contexts, files: ix.files }, {}) : d.findings;
+    }
     return filterFindings(
       d.findings,
-      EMPTY_FILTERS,
+      filters,
       { contexts: ix.contexts, files: ix.files },
       { contextId: this.context.id, members: new Set(this.members.keys()) },
     );
   });
+
+  setHarness(h: string): void {
+    this.harness = h;
+    writeStored('agentmd.harness', h || null);
+  }
   /** Whether a file matches the header search. */
   queryMatch = $derived.by<(id: string) => boolean>(() => {
     const q = this.query.trim();

@@ -45,6 +45,7 @@ function opts(extra: Partial<GraphOptions> = {}): GraphOptions {
     show: { ...DEFAULT_SHOW },
     collapseLinks: false,
     hideSkills: false,
+    hideIsolated: false,
     context: null,
     members: null,
     query: '',
@@ -97,6 +98,24 @@ describe('buildGraph', () => {
     expect(hubNode?.data.aliases).toEqual(['~/.claude/CLAUDE.md']);
     expect(edgeKeys(g)).toContain(`load ${org} > ${hub}`);
     expect(edgeKeys(g)).toContain(`load ${hub} > ${infra}`);
+  });
+
+  it('hides files that no shown reference touches, but keeps a picked context\'s files', () => {
+    const lone = '/home/alex/.agents/skills/lonely/SKILL.md';
+    const withLone: State = { ...s, files: [...s.files, file(lone, { kind: 'skill', scope: 'user', name: 'lonely' })] };
+    const g = buildGraph(withLone, opts({ hideIsolated: true }));
+    expect(ids(g.nodes)).not.toContain(lone);
+    expect(ids(g.nodes)).toContain(doc);
+    const noMentions = buildGraph(withLone, opts({ hideIsolated: true, show: { ...DEFAULT_SHOW, mention: false } }));
+    expect(ids(noMentions.nodes)).not.toContain(doc);
+    const pick = ctx('claude:/home/alex', [lone]);
+    const withCtx = buildGraph(withLone, opts({ hideIsolated: true, context: pick, members: contextMembers(pick, withLone.refs) }));
+    expect(ids(withCtx.nodes)).toContain(lone);
+  });
+
+  it('keeps only the files the harness filter allows', () => {
+    const g = buildGraph(s, opts({ only: new Set([org, infraLink, infra, doc]) }));
+    expect(ids(g.nodes)).toEqual([org, infraLink, infra, doc, 'missing:' + missing].sort());
   });
 
   it('hides skills and the references that touch them', () => {

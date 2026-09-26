@@ -35,3 +35,8 @@ jobs:
         run: |
           go build -o agentmd ./cmd/agentmd
           ./agentmd version
+      - name: end-to-end
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          AGENTMD_BIN=../agentmd npm run e2e

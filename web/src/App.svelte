@@ -148,6 +148,15 @@
       />
       <kbd aria-hidden="true">Ctrl K</kbd>
     </label>
+    <label class="harness">
+      <span class="sr-only">Harness</span>
+      <select value={store.harness} onchange={(e) => store.setHarness(e.currentTarget.value)} title="Show one harness's files">
+        <option value="">All harnesses</option>
+        {#each store.data?.harnesses ?? [] as h (h.name)}
+          <option value={h.name}>{h.label}</option>
+        {/each}
+      </select>
+    </label>
     <div class="picker"><ContextPicker /></div>
     <button class="icon-btn theme" aria-label={themeLabel} title={themeLabel} onclick={() => theme.cycle()}>
       <Icon name={themeIcon} />
@@ -305,8 +314,8 @@
   .top {
     grid-area: top;
     display: grid;
-    grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 300px) auto;
-    grid-template-areas: 'brand scan search picker theme';
+    grid-template-columns: auto auto minmax(0, 1fr) auto minmax(0, 300px) auto;
+    grid-template-areas: 'brand scan search harness picker theme';
     align-items: center;
     gap: 8px 12px;
     padding: 8px 12px;
@@ -384,6 +393,24 @@
   }
   .search input:focus-visible {
     outline: none;
+  }
+  .harness {
+    grid-area: harness;
+  }
+  .harness select {
+    height: 32px;
+    max-width: 150px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: 13px;
+  }
+  .harness select:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 1px;
   }
   .picker {
     grid-area: picker;
@@ -511,7 +538,7 @@
       display: none;
     }
     .top {
-      grid-template-columns: auto auto minmax(0, 1fr) minmax(0, 240px) auto;
+      grid-template-columns: auto auto minmax(0, 1fr) auto minmax(0, 240px) auto;
     }
   }
 
@@ -530,7 +557,7 @@
       grid-template-areas:
         'brand scan theme'
         'search search search'
-        'picker picker picker';
+        'picker harness harness';
       padding: 6px 12px 8px;
       gap: 6px 8px;
     }

@@ -169,19 +169,21 @@ func FromClaude(env Env, res *discover.Result, dir, version string, cap *probe.C
 	c.Version, c.ProbedAt = version, &at
 	loaded := map[string]bool{}
 	for _, l := range cap.Files {
-		path := l.Label
+		path, label := l.Label, l.Label
 		switch {
 		case l.Label == "<managed-settings>":
 			path = filepath.Join(env.ManagedDir(), "managed-settings.json") + "#claudeMd"
 		case cap.ScratchDir != "" && discover.Within(l.Label, cap.ScratchDir):
+			// The probe's throwaway config dir stands in for ~/.claude.
 			path = filepath.Join(env.ClaudeConfigDir, strings.TrimPrefix(l.Label, cap.ScratchDir))
+			label = path
 		}
 		f := res.Files[path]
 		if f == nil && !strings.HasPrefix(path, "<") && !strings.Contains(path, "#") {
 			f = res.Add(path, model.KindInstruction, []string{model.HarnessClaude})
 		}
 		if f == nil {
-			c.Entries = append(c.Entries, model.ContextEntry{Label: l.Label, Bytes: len(l.Content)})
+			c.Entries = append(c.Entries, model.ContextEntry{Label: label, Bytes: len(l.Content)})
 			c.Bytes += len(l.Content)
 			continue
 		}
@@ -189,7 +191,7 @@ func FromClaude(env Env, res *discover.Result, dir, version string, cap *probe.C
 		if f.IsLink {
 			loaded[f.LinkTarget] = true
 		}
-		addEntry(&c, f, l.Label, len(l.Content))
+		addEntry(&c, f, label, len(l.Content))
 	}
 	for _, s := range cap.Skills {
 		c.Skills = append(c.Skills, model.ContextItem{Name: s.Name, FileID: findItem(env, res, dir, model.KindSkill, s.Name)})

@@ -155,6 +155,8 @@ func TestWalkFindsProjectFilesAndSkipsNoise(t *testing.T) {
 	tr.File(filepath.Join(app, "node_modules/pkg/AGENTS.md"), "# vendored\n")
 	tr.File(filepath.Join(app, ".worktrees/topic/AGENTS.md"), "# worktree copy\n")
 	tr.File(filepath.Join(app, "docs/README.md"), "not an agent file\n")
+	wt := tr.Repo(filepath.Join(app, ".claude/worktrees/agent-1"))
+	tr.File(filepath.Join(wt, "AGENTS.md"), "# a worktree checkout\n")
 	lib := tr.Repo(filepath.Join(tr.Code, "lib"))
 	tr.File(filepath.Join(lib, "CLAUDE.local.md"), "local\n")
 
@@ -164,7 +166,7 @@ func TestWalkFindsProjectFilesAndSkipsNoise(t *testing.T) {
 		"app/.agents/skills/lint/SKILL.md", "lib/CLAUDE.local.md"} {
 		must(t, res, filepath.Join(tr.Code, rel))
 	}
-	for _, rel := range []string{"app/node_modules/pkg/AGENTS.md", "app/.worktrees/topic/AGENTS.md", "app/docs/README.md"} {
+	for _, rel := range []string{"app/node_modules/pkg/AGENTS.md", "app/.worktrees/topic/AGENTS.md", "app/docs/README.md", "app/.claude/worktrees/agent-1/AGENTS.md"} {
 		if _, ok := res.Files[filepath.Join(tr.Code, rel)]; ok {
 			t.Errorf("%s should be skipped", rel)
 		}
