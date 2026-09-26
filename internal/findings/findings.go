@@ -210,27 +210,29 @@ func proseOnly(s string) string {
 }
 
 func wordsOf(s string) []word {
-	var out []word
-	line := 1
-	var cur strings.Builder
-	flush := func() {
-		if cur.Len() > 0 {
-			out = append(out, word{cur.String(), line})
-			cur.Reset()
+	// Lower-case once and slice words out of it, so a word costs no
+	// allocation of its own.
+	lower := strings.ToLower(s)
+	out := make([]word, 0, len(lower)/6)
+	line, start := 1, -1
+	for i, r := range lower {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			if start < 0 {
+				start = i
+			}
+			continue
 		}
-	}
-	for _, r := range s {
-		switch {
-		case r == '\n':
-			flush()
+		if start >= 0 {
+			out = append(out, word{lower[start:i], line})
+			start = -1
+		}
+		if r == '\n' {
 			line++
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			cur.WriteRune(unicode.ToLower(r))
-		default:
-			flush()
 		}
 	}
-	flush()
+	if start >= 0 {
+		out = append(out, word{lower[start:], line})
+	}
 	return out
 }
 

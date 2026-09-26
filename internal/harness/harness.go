@@ -394,23 +394,26 @@ func LoadClaudeState(path string) ClaudeState {
 	if json.Unmarshal(data, &top) != nil {
 		return st
 	}
-	var flagKeys []string
-	for k := range top {
-		lk := strings.ToLower(k)
-		// Timestamps such as cachedGrowthBookFeaturesAt change on every
-		// refresh without changing any flag, so they are left out.
-		if strings.HasSuffix(k, "At") || strings.HasSuffix(lk, "time") || strings.HasSuffix(lk, "timestamp") {
-			continue
-		}
-		if strings.Contains(lk, "growthbook") || strings.Contains(lk, "statsig") || strings.Contains(lk, "feature") || strings.Contains(lk, "gate") {
-			flagKeys = append(flagKeys, k)
-		}
-	}
-	sort.Strings(flagKeys)
+	// Claude refreshes its feature-flag cache several times an hour and
+	// hundreds of flag values change with it, so hashing them all made every
+	// probe stale within minutes. Only flags that concern instruction files,
+	// imports and skills count.
 	h := sha256.New()
-	for _, k := range flagKeys {
-		h.Write([]byte(k))
-		h.Write(canonical(top[k]))
+	if raw, ok := top["cachedGrowthBookFeatures"]; ok {
+		var flags map[string]json.RawMessage
+		if json.Unmarshal(raw, &flags) == nil {
+			var names []string
+			for name := range flags {
+				if loadingFlag(name) {
+					names = append(names, name)
+				}
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				h.Write([]byte(name))
+				h.Write(canonical(flags[name]))
+			}
+		}
 	}
 	st.Flags = hex.EncodeToString(h.Sum(nil))
 	var projects map[string]map[string]json.RawMessage
@@ -428,6 +431,18 @@ func LoadClaudeState(path string) ClaudeState {
 	return st
 }
 
+// loadingFlag reports a feature flag that could change which instruction
+// files, imports or skills Claude Code loads, such as tengu_agents_md_mod.
+func loadingFlag(name string) bool {
+	n := strings.ToLower(name)
+	for _, part := range []string{"agents_md", "claudemd", "claude_md", "import", "skill", "rules"} {
+		if strings.Contains(n, part) {
+			return true
+		}
+	}
+	return false
+}
+
 // canonical re-encodes JSON with sorted keys, so a rewrite that only
 // reorders keys does not change the hash.
 func canonical(raw json.RawMessage) []byte {
@@ -442,76 +457,113 @@ func canonical(raw json.RawMessage) []byte {
 	return out
 }
 
-// Stats caches file stats for one scan.
-type Stats map[string]string
+// Stats caches, for one scan, file stats and the fingerprint lines every
+// context of a harness shares (the org, user and plugin files, and settings).
+type Stats struct {
+	stat   map[string]string
+	global map[string][]string
+}
 
-func (s Stats) of(p string) string {
-	if v, ok := s[p]; ok {
+// NewStats returns an empty cache.
+func NewStats() *Stats {
+	return &Stats{stat: map[string]string{}, global: map[string][]string{}}
+}
+
+func (s *Stats) of(p string) string {
+	if v, ok := s.stat[p]; ok {
 		return v
 	}
 	v := "-"
 	if st, err := os.Stat(p); err == nil {
 		v = fmt.Sprintf("%d:%d", st.Size(), st.ModTime().UnixNano())
 	}
-	s[p] = v
+	s.stat[p] = v
 	return v
 }
 
-// Fingerprint hashes everything that could change a probe of harness in dir:
-// the harness version, the org and user files, the settings files, every
-// instruction file up the tree (present or not), the files the last probe
-// loaded, and the relevant parts of Claude's global state.
-func Fingerprint(env Env, res *discover.Result, stats Stats, harness, version, dir string, loaded []string, cs ClaudeState) string {
-	var lines []string
-	add := func(s string) { lines = append(lines, s) }
-	add("harness " + harness)
-	add("version " + version)
-	add("dir " + dir)
+// shared returns the lines every context of harness has in common.
+func (s *Stats) shared(env Env, res *discover.Result, harness, version string, cs ClaudeState) []string {
+	if lines, ok := s.global[harness]; ok {
+		return lines
+	}
+	lines := []string{"harness " + harness, "version " + version}
 	for _, f := range res.Files {
+		if f.Scope != model.ScopeOrg && f.Scope != model.ScopeUser && f.Scope != model.ScopePlugin {
+			continue
+		}
 		real := f.RealPath
 		if f.Field != "" {
 			real = f.Path
 		}
-		switch {
-		case f.Scope == model.ScopeOrg || f.Scope == model.ScopeUser || f.Scope == model.ScopePlugin:
-		case discover.Within(dir, filepath.Dir(f.Path)) && f.Kind == model.KindInstruction:
-		case discover.Within(f.Path, filepath.Join(dir, ".claude"), filepath.Join(dir, ".agents"), filepath.Join(dir, ".codex")):
-		default:
-			continue
-		}
-		add("file " + f.ID + " " + stats.of(real) + " " + f.LinkTarget)
-	}
-	for d := dir; ; d = filepath.Dir(d) {
-		for _, n := range []string{"CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", "AGENTS.override.md",
-			".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml"} {
-			p := filepath.Join(d, n)
-			add("up " + p + " " + stats.of(p))
-		}
-		if harness == model.HarnessClaude {
-			if v, ok := cs.Projects[d]; ok {
-				add("trust " + d + " " + v)
-			}
-		}
-		if d == filepath.Dir(d) {
-			break
-		}
+		lines = append(lines, "file "+f.ID+" "+s.of(real)+" "+f.LinkTarget)
 	}
 	for _, p := range []string{
 		filepath.Join(env.ClaudeConfigDir, "settings.json"), filepath.Join(env.ClaudeConfigDir, "settings.local.json"),
 		filepath.Join(env.ManagedDir(), "managed-settings.json"), filepath.Join(env.CodexHome, "config.toml"),
 		filepath.Join(env.Etc, "codex", "requirements.toml"),
 	} {
-		add("settings " + p + " " + stats.of(p))
-	}
-	for _, p := range loaded {
-		add("loaded " + p + " " + stats.of(p))
+		lines = append(lines, "settings "+p+" "+s.of(p))
 	}
 	if harness == model.HarnessClaude {
-		add("flags " + cs.Flags)
+		lines = append(lines, "flags "+cs.Flags)
+	}
+	s.global[harness] = lines
+	return lines
+}
+
+// Fingerprint hashes everything that could change a probe of harness in dir:
+// the harness version, the org and user files, the settings files, every
+// instruction file up the tree (present or not), the files the last probe
+// loaded, and the relevant parts of Claude's global state.
+func Fingerprint(env Env, res *discover.Result, stats *Stats, harness, version, dir string, loaded []string, cs ClaudeState) string {
+	shared := stats.shared(env, res, harness, version, cs)
+	lines := make([]string, 0, len(shared)+64)
+	lines = append(lines, shared...)
+	lines = append(lines, "dir "+dir)
+	for _, f := range res.Files {
+		if f.Scope == model.ScopeOrg || f.Scope == model.ScopeUser || f.Scope == model.ScopePlugin {
+			continue
+		}
+		ancestor := f.Kind == model.KindInstruction && discover.Within(dir, filepath.Dir(f.Path))
+		inside := discover.Within(f.Path, filepath.Join(dir, ".claude"), filepath.Join(dir, ".agents"), filepath.Join(dir, ".codex"))
+		if !ancestor && !inside {
+			continue
+		}
+		real := f.RealPath
+		if f.Field != "" {
+			real = f.Path
+		}
+		lines = append(lines, "file "+f.ID+" "+stats.of(real)+" "+f.LinkTarget)
+	}
+	for d := dir; ; d = filepath.Dir(d) {
+		for _, n := range []string{"CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", "AGENTS.override.md",
+			".claude/settings.json", ".claude/settings.local.json", ".codex/config.toml"} {
+			p := filepath.Join(d, n)
+			lines = append(lines, "up "+p+" "+stats.of(p))
+		}
+		if harness == model.HarnessClaude {
+			if v, ok := cs.Projects[d]; ok {
+				lines = append(lines, "trust "+d+" "+v)
+			}
+		}
+		if d == filepath.Dir(d) {
+			break
+		}
+	}
+	for _, p := range loaded {
+		lines = append(lines, "loaded "+p+" "+stats.of(p))
 	}
 	sort.Strings(lines)
-	h := sha256.Sum256([]byte(strings.Join(lines, "\n")))
-	return hex.EncodeToString(h[:])
+	// Same bytes as joining with newlines, so caches from earlier versions
+	// stay valid, without building the joined string.
+	h := sha256.New()
+	for i, l := range lines {
+		if i > 0 {
+			h.Write([]byte{'\n'})
+		}
+		h.Write([]byte(l))
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // LoadedPaths lists the real paths a context loaded, for Fingerprint.

@@ -147,7 +147,7 @@ func TestFingerprint(t *testing.T) {
 	global := tr.File(filepath.Join(tr.Home, ".claude.json"), `{"projects":{}}`)
 	fp := func() string {
 		env, res := setup(t, tr)
-		return harness.Fingerprint(env, res, harness.Stats{}, "claude", "1.0", web, nil, harness.LoadClaudeState(global))
+		return harness.Fingerprint(env, res, harness.NewStats(), "claude", "1.0", web, nil, harness.LoadClaudeState(global))
 	}
 	base := fp()
 	if fp() != base {
@@ -188,15 +188,17 @@ func TestFingerprint(t *testing.T) {
 func TestClaudeStateIgnoresRefreshTimestamps(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".claude.json")
-	os.WriteFile(p, []byte(`{"cachedGrowthBookFeatures":{"a":1,"b":{"c":true}},"cachedGrowthBookFeaturesAt":1000,"numStartups":5}`), 0o600)
-	a := harness.LoadClaudeState(p)
-	os.WriteFile(p, []byte(`{"numStartups":6,"cachedGrowthBookFeaturesAt":2000,"cachedGrowthBookFeatures":{"b":{"c":true},"a":1}}`), 0o600)
-	b := harness.LoadClaudeState(p)
-	if a.Flags != b.Flags {
-		t.Error("a refresh that only moves the timestamp or reorders keys keeps the same flags hash")
+	write := func(s string) harness.ClaudeState {
+		os.WriteFile(p, []byte(s), 0o600)
+		return harness.LoadClaudeState(p)
 	}
-	os.WriteFile(p, []byte(`{"cachedGrowthBookFeatures":{"a":2,"b":{"c":true}},"cachedGrowthBookFeaturesAt":3000}`), 0o600)
-	if harness.LoadClaudeState(p).Flags == a.Flags {
-		t.Error("a changed flag changes the hash")
+	a := write(`{"cachedGrowthBookFeatures":{"tengu_agents_md_mod":true,"tengu_import":{"on":1},"tengu_banner_color":"red"},"cachedGrowthBookFeaturesAt":1000,"numStartups":5}`)
+	b := write(`{"numStartups":6,"cachedGrowthBookFeaturesAt":2000,"cachedGrowthBookFeatures":{"tengu_import":{"on":1},"tengu_banner_color":"blue","tengu_agents_md_mod":true}}`)
+	if a.Flags != b.Flags {
+		t.Error("a refresh that moves the timestamp, reorders keys or changes an unrelated flag keeps the same hash")
+	}
+	c := write(`{"cachedGrowthBookFeatures":{"tengu_agents_md_mod":false,"tengu_import":{"on":1},"tengu_banner_color":"blue"}}`)
+	if c.Flags == a.Flags {
+		t.Error("flipping a flag that changes instruction loading changes the hash")
 	}
 }

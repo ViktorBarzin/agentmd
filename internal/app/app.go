@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -227,7 +228,7 @@ func (a *App) Scan() (*model.State, error) {
 	a.marker.Apply(res.Files)
 	rs := refs.Build(refs.Input{Res: res, Home: a.opts.Home, Roots: a.opts.Roots, Config: a.cfg})
 	henv := a.harnessEnv()
-	stats := harness.Stats{}
+	stats := harness.NewStats()
 	cs := harness.LoadClaudeState(a.opts.GlobalConfig)
 
 	var contexts []model.Context
@@ -283,6 +284,9 @@ func (a *App) Scan() (*model.State, error) {
 	a.mu.Lock()
 	a.res, a.state = res, st
 	a.mu.Unlock()
+	// A scan makes a few hundred megabytes of short-lived garbage and keeps
+	// under ten; hand the rest back so an idle agentmd stays small.
+	debug.FreeOSMemory()
 	return st, nil
 }
 
@@ -459,7 +463,7 @@ func (a *App) probeOne(ctx context.Context, h, dir string) error {
 	}
 	a.mu.Lock()
 	loaded := harness.LoadedPaths(res, c)
-	fp := harness.Fingerprint(henv, res, harness.Stats{}, h, a.version(h), dir, loaded, harness.LoadClaudeState(a.opts.GlobalConfig))
+	fp := harness.Fingerprint(henv, res, harness.NewStats(), h, a.version(h), dir, loaded, harness.LoadClaudeState(a.opts.GlobalConfig))
 	a.mu.Unlock()
 	if err := a.store.Put("probe", probeKey(h, dir), probeEntry{FP: fp, Loaded: loaded, Context: c}); err != nil {
 		return err
