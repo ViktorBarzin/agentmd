@@ -63,8 +63,9 @@ type Server struct {
 	proxy  bool
 	logger *log.Logger
 
-	mu   sync.Mutex
-	jobs map[string]*model.Job
+	mu          sync.Mutex
+	jobs        map[string]*model.Job
+	seenRefused map[string]bool
 }
 
 // New validates the options and returns a server ready to serve.
@@ -221,12 +222,13 @@ func (s *Server) guard(next http.Handler) http.Handler {
 			id := r.Header.Get(s.opts.IdentityHeader)
 			allowed := false
 			for _, a := range s.opts.AllowIdentities {
-				if id != "" && id == a {
+				if identityMatches(a, id) {
 					allowed = true
 				}
 			}
 			if !allowed {
-				writeError(w, http.StatusForbidden, "this instance belongs to another user")
+				s.refused(id)
+				writeError(w, http.StatusForbidden, fmt.Sprintf("this agentmd instance belongs to another user; the proxy says you are %q", id))
 				return
 			}
 		} else if !loopbackHost(r.Host) {
@@ -245,6 +247,40 @@ func (s *Server) guard(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// identityMatches compares the identity a proxy sent with an allowed one,
+// ignoring case. An allowed identity without "@" also matches any
+// "<identity>@<domain>", because auth proxies send the username or the email
+// depending on the flow (Authentik sends "vbarzin@gmail.com" for "vbarzin").
+func identityMatches(allowed, got string) bool {
+	allowed, got = strings.TrimSpace(allowed), strings.TrimSpace(got)
+	if allowed == "" || got == "" {
+		return false
+	}
+	if strings.EqualFold(allowed, got) {
+		return true
+	}
+	if strings.Contains(allowed, "@") {
+		return false
+	}
+	local, _, found := strings.Cut(got, "@")
+	return found && local != "" && strings.EqualFold(local, allowed)
+}
+
+// refused logs an identity the proxy vouched for but this instance does not
+// allow, once per identity.
+func (s *Server) refused(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.seenRefused == nil {
+		s.seenRefused = map[string]bool{}
+	}
+	if s.seenRefused[id] || len(s.seenRefused) > 100 {
+		return
+	}
+	s.seenRefused[id] = true
+	s.logger.Printf("refused identity %q from the proxy; allowed: %s", id, strings.Join(s.opts.AllowIdentities, ", "))
 }
 
 // loopbackHost accepts localhost, 127.0.0.1 and [::1], with any port.

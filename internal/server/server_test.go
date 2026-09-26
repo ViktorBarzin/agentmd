@@ -365,3 +365,52 @@ func TestJSONIsGzippedWhenAccepted(t *testing.T) {
 		t.Error("no gzip unless asked")
 	}
 }
+
+func TestIdentityMatching(t *testing.T) {
+	cases := []struct {
+		allowed, header string
+		want            bool
+	}{
+		{"vbarzin", "vbarzin", true},
+		{"vbarzin", "vbarzin@gmail.com", true},
+		{"vbarzin", "VBarzin@Gmail.com", true},
+		{"vbarzin", "vbarzin2@gmail.com", false},
+		{"vbarzin", "mallory", false},
+		{"vbarzin", "", false},
+		{"vbarzin", "@gmail.com", false},
+		{"alice@example.com", "alice@example.com", true},
+		{"alice@example.com", "Alice@Example.com", true},
+		{"alice@example.com", "alice", false},
+		{"alice@example.com", "alice@other.com", false},
+	}
+	for _, c := range cases {
+		if got := identityMatches(c.allowed, c.header); got != c.want {
+			t.Errorf("identityMatches(%q, %q) = %v, want %v", c.allowed, c.header, got, c.want)
+		}
+	}
+}
+
+func TestProxyModeNamesTheRefusedIdentity(t *testing.T) {
+	tr := testutil.New(t)
+	secretFile := filepath.Join(tr.Root, "secret")
+	os.WriteFile(secretFile, []byte("0123456789abcdef0123456789abcdef\n"), 0o600)
+	var logs bytes.Buffer
+	s, err := New(newApp(t, tr), Options{ProxySecretFile: secretFile, IdentityHeader: "X-Authentik-Username",
+		AllowIdentities: []string{"alex"}, UI: ui}, &logs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.Handler()
+	secret := "0123456789abcdef0123456789abcdef"
+	ok := do(t, h, call{method: "GET", path: "/api/state", host: "x", headers: map[string]string{SecretHeader: secret, "X-Authentik-Username": "alex@example.com"}})
+	if ok.Code != 200 {
+		t.Errorf("the full username of an allowed local part gets in: %d %s", ok.Code, ok.Body)
+	}
+	no := do(t, h, call{method: "GET", path: "/", host: "x", headers: map[string]string{SecretHeader: secret, "X-Authentik-Username": "mallory@example.com"}})
+	if no.Code != 403 || !strings.Contains(no.Body.String(), "mallory@example.com") {
+		t.Errorf("a refusal names the identity the proxy sent: %d %s", no.Code, no.Body)
+	}
+	if !strings.Contains(logs.String(), "mallory@example.com") {
+		t.Errorf("the refused identity is logged: %q", logs.String())
+	}
+}

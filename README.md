@@ -90,7 +90,11 @@ agentmd serve --listen 0.0.0.0:7390 \
 ```
 
 Every request must then carry the secret in `X-Agentmd-Proxy-Secret` and an
-allowed identity in the identity header. The process always acts as the OS user
+allowed identity in the identity header. Identities compare without regard to
+case, and an allowed identity without `@` also matches that name at any
+domain, since proxies send the username or the email depending on the flow
+(`--allow-identity alice` lets in `alice@example.com`). A refused identity is
+logged and named in the 403 answer. The process always acts as the OS user
 who started it. `serve` also accepts a listening socket from systemd, so a
 service manager can hold the port across restarts.
 
