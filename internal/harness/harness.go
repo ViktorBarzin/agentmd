@@ -463,6 +463,11 @@ func canonical(raw json.RawMessage) []byte {
 	return out
 }
 
+// probeFormat names how agentmd reads a probe: its parsers and how it maps
+// names to files. Change it with either, so an upgraded agentmd probes again
+// instead of showing what the old code read.
+var probeFormat = "2"
+
 // Stats caches, for one scan, file hashes and the fingerprint lines every
 // context of a harness shares (the org, user and plugin files, and settings).
 type Stats struct {
@@ -498,7 +503,7 @@ func (s *Stats) shared(env Env, res *discover.Result, harness, version string, c
 	if lines, ok := s.global[harness]; ok {
 		return lines
 	}
-	lines := []string{"harness " + harness, "version " + version}
+	lines := []string{"harness " + harness, "version " + version, "format " + probeFormat}
 	for _, f := range res.Files {
 		if f.Scope != model.ScopeOrg && f.Scope != model.ScopeUser && f.Scope != model.ScopePlugin {
 			continue
