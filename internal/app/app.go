@@ -105,8 +105,10 @@ type App struct {
 	store  cache.Store
 	claude *probe.Claude
 	codex  *probe.Codex
-	cver   string
-	xver   string
+	// vmu guards the harness versions, which every scan reads again.
+	vmu  sync.RWMutex
+	cver string
+	xver string
 
 	marker *managed.Marker
 
@@ -212,14 +214,38 @@ func (a *App) probeHarnesses() []string {
 }
 
 func (a *App) version(h string) string {
+	a.vmu.RLock()
+	defer a.vmu.RUnlock()
 	if h == model.HarnessClaude {
 		return a.cver
 	}
 	return a.xver
 }
 
+// refreshVersions asks the harness CLIs for their versions again. Harnesses
+// update themselves while agentmd runs, and a new version must show and must
+// stale the probes the old one made.
+func (a *App) refreshVersions() {
+	ctx := context.Background()
+	if a.claude != nil {
+		if v, err := probe.Version(ctx, a.claude.Bin); err == nil {
+			a.vmu.Lock()
+			a.cver = v
+			a.vmu.Unlock()
+		}
+	}
+	if a.codex != nil {
+		if v, err := probe.Version(ctx, a.codex.Bin); err == nil {
+			a.vmu.Lock()
+			a.xver = v
+			a.vmu.Unlock()
+		}
+	}
+}
+
 // Scan rebuilds the state from disk and the probe cache. It never probes.
 func (a *App) Scan() (*model.State, error) {
+	a.refreshVersions()
 	res, err := discover.Scan(a.discoverEnv())
 	if err != nil {
 		return nil, err
@@ -305,8 +331,8 @@ func reattach(res *discover.Result, c *model.Context) {
 
 func (a *App) harnessInfo() []model.HarnessInfo {
 	out := []model.HarnessInfo{
-		{Name: model.HarnessClaude, Label: "Claude Code", Available: a.claude != nil, Version: a.cver, Probe: true},
-		{Name: model.HarnessCodex, Label: "Codex", Available: a.codex != nil, Version: a.xver, Probe: true},
+		{Name: model.HarnessClaude, Label: "Claude Code", Available: a.claude != nil, Version: a.version(model.HarnessClaude), Probe: true},
+		{Name: model.HarnessCodex, Label: "Codex", Available: a.codex != nil, Version: a.version(model.HarnessCodex), Probe: true},
 		{Name: model.HarnessAgentsMD, Label: "AGENTS.md", Available: true},
 	}
 	for _, h := range a.cfg.Harnesses {
@@ -388,36 +414,58 @@ func (a *App) Probe(ctx context.Context, ids []string, progress Progress) (*mode
 	}
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].dir+jobs[i].h < jobs[j].dir+jobs[j].h })
 
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, Parallel)
 	var mu sync.Mutex
-	done := 0
-	var firstErr error
-	for _, j := range jobs {
-		wg.Add(1)
-		go func(j job) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			err := a.probeOne(ctx, j.h, j.dir)
-			mu.Lock()
-			done++
-			if err != nil && firstErr == nil {
-				firstErr = err
-			}
-			if progress != nil {
-				progress(done, len(jobs), harness.ID(j.h, j.dir), err)
-			}
-			mu.Unlock()
-		}(j)
+	done, total := 0, len(jobs)
+	last := map[job]error{}
+	run := func(jobs []job) {
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, Parallel)
+		for _, j := range jobs {
+			wg.Add(1)
+			go func(j job) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				err := a.probeOne(ctx, j.h, j.dir)
+				mu.Lock()
+				done++
+				last[j] = err
+				if progress != nil {
+					progress(done, total, harness.ID(j.h, j.dir), err)
+				}
+				mu.Unlock()
+			}(j)
+		}
+		wg.Wait()
 	}
-	wg.Wait()
+	a.refreshVersions()
+	run(jobs)
 	st, err = a.Scan()
 	if err != nil {
 		return nil, err
 	}
-	if firstErr != nil && len(jobs) == 1 {
-		return st, firstErr
+	// A harness can change its own inputs on its first run after an update
+	// (Codex unpacks its bundled skills), which stales the probes of this
+	// batch made before it. Probe those once more; the second run sees
+	// settled inputs.
+	var again []job
+	for _, c := range st.Contexts {
+		j := job{c.Harness, c.Dir}
+		if _, ok := last[j]; ok && c.Stale && c.Error == "" {
+			again = append(again, j)
+		}
+	}
+	if len(again) > 0 {
+		mu.Lock()
+		total += len(again)
+		mu.Unlock()
+		run(again)
+		if st, err = a.Scan(); err != nil {
+			return nil, err
+		}
+	}
+	if len(jobs) == 1 {
+		return st, last[jobs[0]]
 	}
 	return st, nil
 }
@@ -444,7 +492,7 @@ func (a *App) probeOne(ctx context.Context, h, dir string) error {
 			break
 		}
 		a.mu.Lock()
-		c = harness.FromClaude(henv, res, dir, a.cver, cap, now)
+		c = harness.FromClaude(henv, res, dir, a.version(h), cap, now)
 		a.mu.Unlock()
 	case model.HarnessCodex:
 		cap, err := a.codex.Probe(ctx, dir)
@@ -453,7 +501,7 @@ func (a *App) probeOne(ctx context.Context, h, dir string) error {
 			break
 		}
 		a.mu.Lock()
-		c = harness.FromCodex(henv, res, dir, a.xver, cap, now)
+		c = harness.FromCodex(henv, res, dir, a.version(h), cap, now)
 		a.mu.Unlock()
 	}
 	if perr != nil {

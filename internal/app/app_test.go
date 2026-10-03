@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -15,12 +16,14 @@ import (
 	"github.com/ViktorBarzin/agentmd/internal/testutil"
 )
 
-// fakeClaude answers --version and, for a probe, posts a request naming the
-// user file (through the throwaway config dir) and the folder's CLAUDE.md.
+// fakeClaude answers --version (from claude.version beside it, when present)
+// and, for a probe, posts a request naming the user file (through the
+// throwaway config dir) and the folder's CLAUDE.md.
 const fakeClaude = `#!/usr/bin/env python3
 import json, os, sys, urllib.request
 if sys.argv[1:] == ["--version"]:
-    print("9.9.9 (Claude Code)"); sys.exit(0)
+    vf = os.path.join(os.path.dirname(os.path.abspath(__file__)), "claude.version")
+    print(open(vf).read().strip() if os.path.exists(vf) else "9.9.9 (Claude Code)"); sys.exit(0)
 open(os.environ["FAKE_COUNT"], "a").write("claude\n")
 args = sys.argv[1:]
 settings = json.loads(args[args.index("--settings") + 1])
@@ -43,12 +46,19 @@ sys.exit(1)
 `
 
 // fakeCodex joins the user file and the folder's AGENTS.md the way Codex does.
+// With codex.unpack beside it, its first run unpacks a bundled skill into
+// CODEX_HOME, as Codex does after an update.
 const fakeCodex = `#!/usr/bin/env python3
 import json, os, sys
 if sys.argv[1:] == ["--version"]:
     print("codex-cli 9.9.9"); sys.exit(0)
 open(os.environ["FAKE_COUNT"], "a").write("codex\n")
 home = os.environ["CODEX_HOME"]
+system = os.path.join(home, "skills", ".system")
+if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "codex.unpack")) and not os.path.exists(os.path.join(system, ".marker")):
+    os.makedirs(os.path.join(system, "bundled"), exist_ok=True)
+    open(os.path.join(system, "bundled", "SKILL.md"), "w").write("---\nname: bundled\ndescription: Comes with Codex.\n---\n")
+    open(os.path.join(system, ".marker"), "w").write("1")
 user = open(os.path.join(home, "AGENTS.md")).read().strip() if os.path.exists(os.path.join(home, "AGENTS.md")) else ""
 proj = open("AGENTS.md").read() if os.path.exists("AGENTS.md") else ""
 text = user + ("\n\n--- project-doc ---\n\n" + proj if proj else "")
@@ -208,5 +218,96 @@ func TestProbeRejectsUnknownContexts(t *testing.T) {
 		if _, err := a.Probe(context.Background(), []string{id}, nil); err == nil {
 			t.Errorf("%s: want an error", id)
 		}
+	}
+}
+
+// withCLIs puts the fake CLIs first on PATH and starts an App that finds them.
+func (f *fixture) withCLIs(t *testing.T) *App {
+	t.Helper()
+	t.Setenv("PATH", filepath.Join(f.tr.Root, "fakebin")+":"+os.Getenv("PATH"))
+	a, err := New(f.app.opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func staleIDs(st *model.State) []string {
+	out := []string{}
+	for _, c := range st.Contexts {
+		if c.Stale {
+			out = append(out, c.ID)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// A harness updated while agentmd runs shows its new version, and the probes
+// the old version made go stale.
+func TestScanNoticesAHarnessUpdate(t *testing.T) {
+	f := setup(t)
+	a := f.withCLIs(t)
+	if _, err := a.Probe(context.Background(), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(f.tr.Root, "fakebin", "claude.version"), []byte("10.0.0 (Claude Code)\n"), 0o644)
+	st, err := a.Scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{}
+	for _, d := range []string{f.tr.Home, filepath.Join(f.tr.Code, "app"), filepath.Join(f.tr.Code, "lib")} {
+		want = append(want, "claude:"+d)
+	}
+	sort.Strings(want)
+	if got := staleIDs(st); !reflect.DeepEqual(got, want) {
+		t.Errorf("stale = %v, want every Claude context %v", got, want)
+	}
+	if v := st.Harnesses[0].Version; v != "10.0.0 (Claude Code)" {
+		t.Errorf("Claude Code version = %q", v)
+	}
+	st, err = a.Probe(context.Background(), nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range st.Contexts {
+		if c.Harness == model.HarnessClaude && c.Version != "10.0.0 (Claude Code)" {
+			t.Errorf("%s says it was probed with %q", c.ID, c.Version)
+		}
+	}
+	if got := staleIDs(st); len(got) != 0 {
+		t.Errorf("stale after probing again: %v", got)
+	}
+}
+
+// Codex unpacks its bundled skills on its first run after an update, which
+// changes the inputs of every probe made before it in the same batch. One
+// more pass over those leaves every context fresh.
+func TestProbeAgainWhenARunChangesItsOwnInputs(t *testing.T) {
+	f := setup(t)
+	os.WriteFile(filepath.Join(f.tr.Root, "fakebin", "codex.unpack"), nil, 0o644)
+	a := f.withCLIs(t)
+	var total atomic.Int32
+	st, err := a.Probe(context.Background(), nil, func(done, n int, id string, err error) {
+		total.Store(int32(n))
+		if err != nil {
+			t.Errorf("probe %s: %v", id, err)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := staleIDs(st); len(got) != 0 {
+		t.Errorf("stale after the batch: %v", got)
+	}
+	if f.runs(t) != 12 || total.Load() != 12 {
+		t.Errorf("want 6 probes and the same 6 again after the unpack: ran %d, progress total %d", f.runs(t), total.Load())
+	}
+	if _, err := a.Probe(context.Background(), nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if f.runs(t) != 12 {
+		t.Errorf("a settled cache runs no probes, ran %d more", f.runs(t)-12)
 	}
 }
