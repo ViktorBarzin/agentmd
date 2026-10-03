@@ -30,6 +30,9 @@ non-2xx status and `{"error": "..."}`.
   proxy may not hold a request open that long. Poll `GET /api/jobs/<id>` until
   `status` is `done` or `error`, then read `GET /api/state`. Analysis findings
   also appear in the next `State`.
+- A probe job's `total` can grow while it runs. A harness can change its own
+  inputs on its first run after an update, so when a batch leaves any of its
+  contexts stale, it probes those once more.
 - `POST /api/apply` saves several files for a fix proposal. It checks every
   `baseHash` before writing any file.
 - `State.unprobed` lists the Claude Code and Codex contexts not probed yet;
