@@ -457,7 +457,7 @@ func canonical(raw json.RawMessage) []byte {
 	return out
 }
 
-// Stats caches, for one scan, file stats and the fingerprint lines every
+// Stats caches, for one scan, file hashes and the fingerprint lines every
 // context of a harness shares (the org, user and plugin files, and settings).
 type Stats struct {
 	stat   map[string]string
@@ -469,12 +469,18 @@ func NewStats() *Stats {
 	return &Stats{stat: map[string]string{}, global: map[string][]string{}}
 }
 
+// of returns the content hash of p, or "-" when it does not exist. Content,
+// not the modification time: harnesses and updaters rewrite files without
+// changing them, and a rewrite cannot change what a harness loads.
 func (s *Stats) of(p string) string {
 	if v, ok := s.stat[p]; ok {
 		return v
 	}
 	v := "-"
-	if st, err := os.Stat(p); err == nil {
+	if data, err := os.ReadFile(p); err == nil {
+		v = discover.Hash(string(data))
+	} else if st, err := os.Stat(p); err == nil {
+		// There but unreadable, or a folder.
 		v = fmt.Sprintf("%d:%d", st.Size(), st.ModTime().UnixNano())
 	}
 	s.stat[p] = v
@@ -491,11 +497,7 @@ func (s *Stats) shared(env Env, res *discover.Result, harness, version string, c
 		if f.Scope != model.ScopeOrg && f.Scope != model.ScopeUser && f.Scope != model.ScopePlugin {
 			continue
 		}
-		real := f.RealPath
-		if f.Field != "" {
-			real = f.Path
-		}
-		lines = append(lines, "file "+f.ID+" "+s.of(real)+" "+f.LinkTarget)
+		lines = append(lines, "file "+f.ID+" "+f.Hash+" "+f.LinkTarget)
 	}
 	for _, p := range []string{
 		filepath.Join(env.ClaudeConfigDir, "settings.json"), filepath.Join(env.ClaudeConfigDir, "settings.local.json"),
@@ -529,11 +531,7 @@ func Fingerprint(env Env, res *discover.Result, stats *Stats, harness, version, 
 		if !ancestor && !inside {
 			continue
 		}
-		real := f.RealPath
-		if f.Field != "" {
-			real = f.Path
-		}
-		lines = append(lines, "file "+f.ID+" "+stats.of(real)+" "+f.LinkTarget)
+		lines = append(lines, "file "+f.ID+" "+f.Hash+" "+f.LinkTarget)
 	}
 	for d := dir; ; d = filepath.Dir(d) {
 		for _, n := range []string{"CLAUDE.md", "CLAUDE.local.md", ".claude/CLAUDE.md", "AGENTS.md", "AGENTS.override.md",

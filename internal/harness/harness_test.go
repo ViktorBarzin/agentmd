@@ -185,6 +185,39 @@ func TestFingerprint(t *testing.T) {
 	}
 }
 
+// Updaters and harnesses rewrite files without changing them (Codex unpacks
+// its bundled skills, a skills updater copies a set over itself), so the
+// fingerprint follows content, not modification times.
+func TestFingerprintFollowsContentNotTimestamps(t *testing.T) {
+	tr := testutil.New(t)
+	app := tr.Repo(filepath.Join(tr.Code, "app"))
+	doc := tr.File(filepath.Join(app, "AGENTS.md"), "# app\n")
+	skill := tr.File(filepath.Join(tr.Home, ".codex/skills/.system/imagegen/SKILL.md"), "---\nname: imagegen\n---\n")
+	settings := tr.File(filepath.Join(tr.Home, ".claude/settings.json"), `{"model":"opus"}`)
+	fp := func() string {
+		env, res := setup(t, tr)
+		return harness.Fingerprint(env, res, harness.NewStats(), "claude", "1.0", app, []string{doc}, harness.ClaudeState{})
+	}
+	base := fp()
+	future := time.Now().Add(time.Hour)
+	for _, p := range []string{doc, skill, settings} {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(p, data, 0o644)
+		os.Chtimes(p, future, future)
+	}
+	if fp() != base {
+		t.Error("rewriting files with the same content keeps the fingerprint")
+	}
+	os.WriteFile(skill, []byte("---\nname: imagegen\n---\nnew\n"), 0o644)
+	os.Chtimes(skill, future, future)
+	if fp() == base {
+		t.Error("new content changes the fingerprint")
+	}
+}
+
 func TestClaudeStateIgnoresRefreshTimestamps(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, ".claude.json")
