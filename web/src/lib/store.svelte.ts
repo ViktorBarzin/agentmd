@@ -167,9 +167,12 @@ class AppStore {
       this.loading = false;
       this.now = Date.now();
     }
-    // As the plan says, opening the UI probes what has never been probed and
-    // what went stale; a probe starts the harness but never reaches a model.
+    // The last scan shows at once, but agentmd may have made it days ago, so
+    // opening the UI scans again. Then, as the plan says, it probes what has
+    // never been probed and what went stale; a probe starts the harness but
+    // never reaches a model.
     if (first && this.data) {
+      await this.rescan();
       const backlog = probeBacklog(this.data);
       if (backlog.unprobed + backlog.stale > 0) void this.probe();
     }
