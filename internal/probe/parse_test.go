@@ -45,12 +45,36 @@ func TestParseClaudeRequest(t *testing.T) {
 	if !reflect.DeepEqual(c.Files, want) {
 		t.Errorf("files =\n%#v\nwant\n%#v", c.Files, want)
 	}
-	if got := names(c.Skills); !reflect.DeepEqual(got, []string{"tdd", "publish-page", "context7"}) {
-		// "context7:docs" keeps only the part before the first colon, like a description.
+	if got := names(c.Skills); !reflect.DeepEqual(got, []string{"tdd", "publish-page", "context7:docs"}) {
+		// A name runs up to ": ", so a plugin skill keeps its prefix.
 		t.Errorf("skills = %v", got)
 	}
 	if got := names(c.Subagents); !reflect.DeepEqual(got, []string{"reviewer", "claude"}) {
 		t.Errorf("subagents = %v", got)
+	}
+}
+
+// A description can run over several lines, and plugin and folder skills put
+// a prefix before the name. The first blank line ends a list.
+func TestParseClaudeRequestMultiLineItems(t *testing.T) {
+	sys := "The following skills are available for use with the Skill tool:\n\n" +
+		"- tdd: Test first.\n" +
+		"- file-issue: File an issue.\nUse when: (1) something is broken,\n(2) a feature is missing.\n" +
+		"    an indented line\n- a bullet inside the description\n" +
+		"- frontend-design:frontend-design: Build pages.\n" +
+		"- apps/web:deploy: Deploy the web app.\n" +
+		"- bare\n" +
+		"\nToday's date is 2026-10-03.\n- trailing: not a skill\n\n" +
+		"Available agent types for the Agent tool:\n- reviewer: Reviews diffs.\nIt reads the second line too.\n- claude: Catch-all (Tools: *)\n"
+	c, err := ParseClaudeRequest(claudeBody(t, "hello", sys))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := names(c.Skills), []string{"tdd", "file-issue", "frontend-design:frontend-design", "apps/web:deploy", "bare"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("skills = %v, want %v", got, want)
+	}
+	if got, want := names(c.Subagents), []string{"reviewer", "claude"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("subagents = %v, want %v", got, want)
 	}
 }
 

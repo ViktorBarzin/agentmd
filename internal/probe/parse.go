@@ -40,7 +40,9 @@ var (
 	contentsRe = regexp.MustCompile(`(?m)^Contents of (.+?) \(([^()\n]*(?:\([^()\n]*\)[^()\n]*)*)\):\n\n`)
 	skillsHead = "The following skills are available for use with the Skill tool:"
 	agentsHead = "Available agent types for the Agent tool:"
-	agentLine  = regexp.MustCompile(`^- ([A-Za-z0-9_:.-]+): `)
+	// itemLine starts a list item. A name runs up to ": ", so a plugin skill
+	// (plugin:skill) or a folder skill (apps/web:deploy) keeps its prefix.
+	itemLine = regexp.MustCompile(`^- (\S+?)(?::(?: |$)|$)`)
 )
 
 // ParseClaudeRequest reads a recorded /v1/messages request body.
@@ -66,23 +68,10 @@ func ParseClaudeRequest(body []byte) (*ClaudeCapture, error) {
 			c.Files = parseContents(t)
 		}
 		if i := strings.Index(t, skillsHead); i >= 0 && c.Skills == nil {
-			c.Skills = parseList(t[i+len(skillsHead):], func(line string) (Item, bool) {
-				name := strings.TrimPrefix(line, "- ")
-				if j := strings.Index(name, ":"); j >= 0 {
-					name = name[:j]
-				}
-				name = strings.TrimSpace(name)
-				return Item{Name: name}, name != ""
-			})
+			c.Skills = parseList(t[i+len(skillsHead):])
 		}
 		if i := strings.Index(t, agentsHead); i >= 0 && c.Subagents == nil {
-			c.Subagents = parseList(t[i+len(agentsHead):], func(line string) (Item, bool) {
-				m := agentLine.FindStringSubmatch(line)
-				if m == nil {
-					return Item{}, false
-				}
-				return Item{Name: m[1]}, true
-			})
+			c.Subagents = parseList(t[i+len(agentsHead):])
 		}
 	}
 	return c, nil
@@ -131,28 +120,22 @@ func parseContents(t string) []Loaded {
 	return out
 }
 
-// parseList reads "- item" lines after a heading until the first line that
-// is neither blank-before-items nor an item.
-func parseList(rest string, item func(string) (Item, bool)) []Item {
+// parseList reads the "- name: description" items after a heading. A
+// description can run over several lines, so a line that starts no item
+// belongs to the item before it. The first blank line after an item ends the
+// list.
+func parseList(rest string) []Item {
 	out := []Item{}
-	started := false
 	for _, line := range strings.Split(rest, "\n") {
 		line = strings.TrimRight(line, "\r")
 		if strings.TrimSpace(line) == "" {
-			if started {
+			if len(out) > 0 {
 				break
 			}
 			continue
 		}
-		if !strings.HasPrefix(line, "- ") {
-			if started {
-				break
-			}
-			continue
-		}
-		started = true
-		if it, ok := item(line); ok {
-			out = append(out, it)
+		if m := itemLine.FindStringSubmatch(line); m != nil {
+			out = append(out, Item{Name: m[1]})
 		}
 	}
 	return out
