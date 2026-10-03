@@ -194,7 +194,13 @@ func FromClaude(env Env, res *discover.Result, dir, version string, cap *probe.C
 		addEntry(&c, f, label, len(l.Content))
 	}
 	for _, s := range cap.Skills {
-		c.Skills = append(c.Skills, model.ContextItem{Name: s.Name, FileID: findItem(env, res, dir, model.KindSkill, s.Name)})
+		// Claude Code lists custom commands with the skills, and a skill wins
+		// a name both share.
+		id := findItem(env, res, dir, model.KindSkill, s.Name)
+		if id == "" {
+			id = findItem(env, res, dir, model.KindCommand, s.Name)
+		}
+		c.Skills = append(c.Skills, model.ContextItem{Name: s.Name, FileID: id})
 	}
 	for _, s := range cap.Subagents {
 		c.Subagents = append(c.Subagents, model.ContextItem{Name: s.Name, FileID: findItem(env, res, dir, model.KindSubagent, s.Name)})

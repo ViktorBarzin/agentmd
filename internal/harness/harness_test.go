@@ -61,6 +61,10 @@ func TestFromClaude(t *testing.T) {
 	user := tr.File(filepath.Join(tr.Home, ".claude/CLAUDE.md"), "# user\n")
 	tr.File(filepath.Join(tr.Home, ".claude/skills/tdd/SKILL.md"), "---\nname: tdd\n---\n")
 	tr.File(filepath.Join(app, ".claude/agents/reviewer.md"), "---\nname: reviewer\n---\n")
+	// Claude Code lists custom commands with the skills; a skill wins a name
+	// both share.
+	deploy := tr.File(filepath.Join(app, ".claude/commands/deploy.md"), "Deploy the app.\n")
+	tr.File(filepath.Join(app, ".claude/commands/tdd.md"), "A command named like a skill.\n")
 	env, res := setup(t, tr)
 	scratch := filepath.Join(tr.Root, "cache/claude-123")
 	cap := &probe.ClaudeResult{ScratchDir: scratch, ClaudeCapture: &probe.ClaudeCapture{
@@ -69,7 +73,7 @@ func TestFromClaude(t *testing.T) {
 			{Label: scratch + "/CLAUDE.md", Content: "# user\n"},
 			{Label: filepath.Join(tr.Code, "CLAUDE.md"), Content: "# code"},
 		},
-		Skills:    []probe.Item{{Name: "tdd"}, {Name: "builtin-skill"}},
+		Skills:    []probe.Item{{Name: "tdd"}, {Name: "builtin-skill"}, {Name: "deploy"}},
 		Subagents: []probe.Item{{Name: "reviewer"}, {Name: "general-purpose"}},
 	}}
 	c := harness.FromClaude(env, res, app, "2.1.283 (Claude Code)", cap, time.Now())
@@ -83,7 +87,7 @@ func TestFromClaude(t *testing.T) {
 	if c.Bytes != len("# org")+len("# user\n")+len("# code") || c.Source != "probe" || c.ID != "claude:"+app {
 		t.Errorf("bytes %d source %q id %q", c.Bytes, c.Source, c.ID)
 	}
-	if c.Skills[0].FileID != filepath.Join(tr.Home, ".claude/skills/tdd/SKILL.md") || c.Skills[1].FileID != "" {
+	if c.Skills[0].FileID != filepath.Join(tr.Home, ".claude/skills/tdd/SKILL.md") || c.Skills[1].FileID != "" || c.Skills[2].FileID != deploy {
 		t.Errorf("skills = %+v", c.Skills)
 	}
 	if c.Subagents[0].FileID != filepath.Join(app, ".claude/agents/reviewer.md") || c.Subagents[1].FileID != "" {
