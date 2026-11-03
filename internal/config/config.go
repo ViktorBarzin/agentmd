@@ -68,6 +68,8 @@ type StaticHarness struct {
 	UserFiles    []string `toml:"user_files"`
 	ProjectFiles []string `toml:"project_files"`
 	SkillDirs    []string `toml:"skill_dirs"`
+	// BundledSkills names skills the harness offers with no file on disk.
+	BundledSkills []string `toml:"bundled_skills"`
 }
 
 // DefaultPaths returns the files Load reads, machine-wide first.

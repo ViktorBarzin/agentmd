@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ViktorBarzin/agentmd/internal/harness"
 	"github.com/ViktorBarzin/agentmd/internal/model"
 	"github.com/ViktorBarzin/agentmd/internal/testutil"
 )
@@ -309,5 +310,74 @@ func TestProbeAgainWhenARunChangesItsOwnInputs(t *testing.T) {
 	}
 	if f.runs(t) != 12 {
 		t.Errorf("a settled cache runs no probes, ran %d more", f.runs(t)-12)
+	}
+}
+
+// A skill a harness ships inside its binary, or one a configured harness
+// declares, is offered even with no file on disk and no probe; a skill no
+// harness ships still dangles, written by name or as /name.
+func TestScanKnowsBundledSkills(t *testing.T) {
+	f := setup(t)
+	cfg := filepath.Join(f.tr.Root, "config.toml")
+	os.WriteFile(cfg, []byte("[[harness]]\nname = \"pi\"\nbundled_skills = [\"pi-search\"]\n"), 0o644)
+	f.tr.File(filepath.Join(f.tr.Code, "app", "AGENTS.md"), strings.Join([]string{
+		"# app",
+		"Drive the app with the `run` skill.",
+		"Load the `workflow-authoring` skill first.",
+		"Run `/simplify` after a change, and type /model to switch.",
+		"Search with the `pi-search` skill.",
+		"Then run the `/doc-tone` skill.",
+		"Use the `nope` skill.",
+	}, "\n"))
+	opts := f.app.opts
+	opts.ConfigPaths = []string{cfg}
+	a, err := New(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := a.Scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, fd := range st.Findings {
+		if fd.Kind == model.FindDangling && strings.Contains(fd.Summary, "skill") {
+			got = append(got, fd.Summary)
+		}
+	}
+	sort.Strings(got)
+	want := []string{
+		"~/code/app/AGENTS.md mentions the /doc-tone skill, which no harness here offers",
+		"~/code/app/AGENTS.md mentions the nope skill, which no harness here offers",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("skill findings = %q, want %q", got, want)
+	}
+}
+
+func TestDropOfferedSkills(t *testing.T) {
+	contexts := []model.Context{{Skills: []model.ContextItem{{Name: "publish-page"}, {Name: "plugin:review-pr"}}}}
+	cases := []struct {
+		text string
+		kept bool
+	}{
+		{"publish-page", false},
+		{"/publish-page", false},
+		{"review-pr", false},
+		{"/review-pr", false},
+		{"run", false},
+		{"/loop", false},
+		{"/clear", false},
+		{"doc-tone", true},
+		{"/doc-tone", true},
+	}
+	for _, c := range cases {
+		t.Run(c.text, func(t *testing.T) {
+			rs := []model.Ref{{From: "a", To: "skill:x", Kind: model.RefMention, Sub: "skill", Text: c.text, Dangling: true}}
+			got := dropOfferedSkills(rs, contexts, harness.Offered(nil))
+			if (len(got) == 1) != c.kept {
+				t.Errorf("kept = %v, want %v", len(got) == 1, c.kept)
+			}
+		})
 	}
 }

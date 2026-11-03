@@ -330,7 +330,22 @@ var (
 	skillAfter  = regexp.MustCompile("(?i)`([a-z0-9][a-z0-9:_-]*)`\\s+skill")
 	skillBefore = regexp.MustCompile("(?i)skill\\s+`([a-z0-9][a-z0-9:_-]*)`")
 	slashRe     = regexp.MustCompile(`(^|\s)/([a-z0-9][a-z0-9-]*)($|[\s.,;:!?)])`)
+	// slashVerb and slashSkill find a /name that the text calls a skill: one
+	// after a verb that starts a command, or one followed by the word skill.
+	// It is either bare or the whole of a code span. Other /name tokens are
+	// too often an endpoint or a folder to count as missing skills. The verbs
+	// are lower case or capitalised, so a Dockerfile's RUN does not count.
+	slashVerb  = regexp.MustCompile("\\b(?:[Rr]uns?|[Rr]unning|[Ii]nvokes?|[Ii]nvoking|[Tt]ypes?|[Tt]yping)\\s+(?:the\\s+)?(?:`/([a-z0-9][a-z0-9-]*)`|/([a-z0-9][a-z0-9-]*)(?:$|[\\s.,;:!?)]))")
+	slashSkill = regexp.MustCompile("(?:^|[\\s(])(?:`/([a-z0-9][a-z0-9-]*)`|/([a-z0-9][a-z0-9-]*))\\s+(?i:skill)\\b")
+	slashSpan  = regexp.MustCompile("^/[a-z0-9][a-z0-9-]*$")
 )
+
+// rootDirs are top-level folders whose /name reads as a path, not a skill.
+var rootDirs = map[string]bool{
+	"bin": true, "boot": true, "dev": true, "etc": true, "home": true, "lib": true, "lib64": true,
+	"media": true, "mnt": true, "nix": true, "opt": true, "proc": true, "root": true, "run": true,
+	"sbin": true, "snap": true, "srv": true, "sys": true, "tmp": true, "usr": true, "var": true,
+}
 
 // mentions scans text for paths and skill names. With docsOnly false it scans
 // agent files and may add referenced docs; with docsOnly true it scans those
@@ -379,23 +394,52 @@ func (b *builder) scanFile(f *model.File, addDocs bool) {
 			}
 		}
 		for _, m := range slashRe.FindAllStringSubmatch(stripped, -1) {
-			b.skillMention(f, m[2], n, false)
+			b.slashMention(f, m[2], n, false)
+		}
+		// Only a code span that is exactly /name may stand for a skill.
+		spans := codeSpanRe.ReplaceAllStringFunc(line, func(s string) string {
+			if slashSpan.MatchString(s[1 : len(s)-1]) {
+				return s
+			}
+			return " "
+		})
+		for _, re := range []*regexp.Regexp{slashVerb, slashSkill} {
+			for _, m := range re.FindAllStringSubmatch(spans, -1) {
+				b.slashMention(f, m[1]+m[2], n, true)
+			}
 		}
 	}
 }
 
+// slashMention is a skill mention written as /name. Its text keeps the
+// slash, so a finding quotes it as written. A name that is also a top-level
+// folder on this machine reads as a path instead.
+func (b *builder) slashMention(f *model.File, name string, line int, flagMissing bool) {
+	if rootDirs[name] {
+		return
+	}
+	if _, err := os.Stat("/" + name); err == nil {
+		return
+	}
+	b.mentionSkill(f, name, "/"+name, line, flagMissing)
+}
+
 func (b *builder) skillMention(f *model.File, name string, line int, flagMissing bool) {
+	b.mentionSkill(f, name, name, line, flagMissing)
+}
+
+func (b *builder) mentionSkill(f *model.File, name, text string, line int, flagMissing bool) {
 	s := b.skill(name)
 	if s == nil {
 		if flagMissing && !upstream(f) {
-			b.add(model.Ref{From: f.ID, To: "skill:" + name, Kind: model.RefMention, Sub: "skill", Line: line, Text: name, Dangling: true})
+			b.add(model.Ref{From: f.ID, To: "skill:" + name, Kind: model.RefMention, Sub: "skill", Line: line, Text: text, Dangling: true})
 		}
 		return
 	}
 	if s.RealPath == f.RealPath {
 		return
 	}
-	b.add(model.Ref{From: f.ID, To: s.ID, Kind: model.RefMention, Sub: "skill", Line: line, Text: name})
+	b.add(model.Ref{From: f.ID, To: s.ID, Kind: model.RefMention, Sub: "skill", Line: line, Text: text})
 }
 
 // pathMention resolves one path-like token. allowBare lets a token without a
@@ -430,7 +474,7 @@ func (b *builder) pathMention(f *model.File, raw, sub string, line int, inFence,
 		b.add(model.Ref{From: f.ID, To: t.ID, Kind: model.RefMention, Sub: sub, Line: line, Text: token})
 		return
 	}
-	if inFence || !addDocs || upstream(f) || !strings.Contains(token, "/") {
+	if inFence || !addDocs || upstream(f) || !strings.Contains(token, "/") || exampleName(token) {
 		return
 	}
 	// Only a path whose folder exists near the file counts as broken; the
@@ -441,6 +485,33 @@ func (b *builder) pathMention(f *model.File, raw, sub string, line int, inFence,
 			return
 		}
 	}
+}
+
+// placeholderWords are the words an illustrative file name is made of, as in
+// docs/adr/0054-x.md or notes/foo.md.
+var placeholderWords = map[string]bool{
+	"x": true, "xx": true, "xxx": true, "xxxx": true, "y": true, "z": true, "n": true, "nn": true, "nnn": true, "nnnn": true,
+	"foo": true, "bar": true, "baz": true, "qux": true, "example": true, "sample": true, "placeholder": true,
+	"name": true, "slug": true, "topic": true, "something": true, "yyyy": true, "mm": true, "dd": true,
+}
+
+// exampleName reports a path whose file name, apart from numbers, is made only
+// of placeholder words. Such a path illustrates a pattern rather than pointing
+// at a file, so it does not count as broken. A real word anywhere in the name
+// (0053-anubis-x-real-ip.md) keeps the path a reference.
+func exampleName(token string) bool {
+	base := strings.TrimSuffix(filepath.Base(token), filepath.Ext(token))
+	words := 0
+	for _, w := range strings.FieldsFunc(base, func(r rune) bool { return r == '-' || r == '_' || r == '.' }) {
+		if strings.Trim(w, "0123456789") == "" {
+			continue
+		}
+		if !placeholderWords[strings.ToLower(w)] {
+			return false
+		}
+		words++
+	}
+	return words > 0
 }
 
 // upstream reports a file someone else maintains, whose broken links are

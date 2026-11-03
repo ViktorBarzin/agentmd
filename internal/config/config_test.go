@@ -48,6 +48,7 @@ name = "pi"
 user_files = ["~/.pi/agent/AGENTS.md"]
 project_files = ["AGENTS.md"]
 skill_dirs = ["~/.agents/skills"]
+bundled_skills = ["pi-search"]
 `)
 	c, err := Load(home, machine, filepath.Join(dir, "missing.toml"), user)
 	if err != nil {
@@ -68,7 +69,8 @@ skill_dirs = ["~/.agents/skills"]
 	if got := c.Builds[0]; got.Output != "/home/alex/.agents/AGENTS.md" || got.Parts[1] != "/home/alex/.agents/personal.md" || got.Command != "agents-sync" {
 		t.Errorf("build = %+v", got)
 	}
-	if got := c.Harnesses[0]; got.Name != "pi" || got.UserFiles[0] != "/home/alex/.pi/agent/AGENTS.md" || got.ProjectFiles[0] != "AGENTS.md" {
+	if got := c.Harnesses[0]; got.Name != "pi" || got.UserFiles[0] != "/home/alex/.pi/agent/AGENTS.md" || got.ProjectFiles[0] != "AGENTS.md" ||
+		!reflect.DeepEqual(got.BundledSkills, []string{"pi-search"}) {
 		t.Errorf("harness = %+v", got)
 	}
 }

@@ -288,3 +288,103 @@ func TestExpandBraces(t *testing.T) {
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
+
+// danglingSkills lists the names of the dangling skill mentions from one file.
+func danglingSkills(rs []model.Ref, from string) []string {
+	var out []string
+	for _, r := range rs {
+		if r.From == from && r.Sub == "skill" && r.Dangling {
+			out = append(out, r.Text)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func TestSlashSkillMentions(t *testing.T) {
+	cases := []struct {
+		name, line string
+		want       []string
+	}{
+		{"backticked after run", "Before publishing, run `/doc-tone`.", []string{"/doc-tone"}},
+		{"backticked then skill", "Run the `/doc-tone` skill first.", []string{"/doc-tone"}},
+		{"bare then skill", "Finish with the /wrap-up skill.", []string{"/wrap-up"}},
+		{"bare after invoke", "Invoke /grill-me when the plan is fuzzy.", []string{"/grill-me"}},
+		{"bare after typing", "Typing /triage starts it.", []string{"/triage"}},
+		{"an offered skill links instead", "Run /publish-page when done.", nil},
+		{"an offered skill, backticked", "Use the `/publish-page` skill.", nil},
+		{"a path after run", "Then run /usr/local/bin/agentmd check.", nil},
+		{"a root folder after run", "Run `/tmp` cleanup weekly.", nil},
+		{"a root folder before skill", "The /etc skill folder is empty.", nil},
+		{"an endpoint", "Hit `/healthz` to check the pod.", nil},
+		{"an endpoint after call", "Then call `/streams` for the list.", nil},
+		{"a URL", "See https://example.com/doc-tone skill notes.", nil},
+		{"a backticked slash with no skill context", "The `/relay` route forwards it.", nil},
+		{"a command inside a longer code span", "Bake it in (`RUN /docker-mods || true` then `ENV X=`).", nil},
+		{"a shouted Dockerfile verb", "RUN /docker-mods at build time.", nil},
+		{"a code span that does not close on the line", "The container runs `/gluetun-entrypoint", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr := testutil.New(t)
+			tr.File(filepath.Join(tr.Home, ".agents/skills/publish-page/SKILL.md"), "---\nname: publish-page\n---\n")
+			f := tr.File(filepath.Join(tr.Home, ".claude/CLAUDE.md"), "# User\n"+c.line+"\n")
+			_, rs := build(t, tr, config.Config{})
+			if got := danglingSkills(rs, f); strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Errorf("dangling skills = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestSlashSkillInFenceIsNotAMention(t *testing.T) {
+	tr := testutil.New(t)
+	f := tr.File(filepath.Join(tr.Home, ".claude/CLAUDE.md"), "# User\n```\nrun `/doc-tone`\n```\n")
+	_, rs := build(t, tr, config.Config{})
+	if got := danglingSkills(rs, f); len(got) != 0 {
+		t.Errorf("dangling skills = %v, want none", got)
+	}
+}
+
+func TestExamplePathsDoNotDangle(t *testing.T) {
+	cases := []struct {
+		token    string
+		dangling bool
+	}{
+		{"docs/adr/0054-x.md", false},
+		{"docs/adr/foo.md", false},
+		{"docs/adr/0001-example.md", false},
+		{"docs/adr/0002_xxx.md", false},
+		{"docs/adr/2026-07-14-anubis-x-real-ip.md", true},
+		{"docs/adr/0055-real-decision.md", true},
+		{"docs/adr/x-ray.md", true},
+		{"docs/adr/0054.md", true},
+	}
+	for _, c := range cases {
+		t.Run(c.token, func(t *testing.T) {
+			tr := testutil.New(t)
+			app := tr.Repo(filepath.Join(tr.Code, "app"))
+			tr.Dir(filepath.Join(app, "docs/adr"))
+			f := tr.File(filepath.Join(app, "AGENTS.md"), "# App\nWhen it lands, rename "+c.token+" to its final name.\n")
+			_, rs := build(t, tr, config.Config{})
+			var got bool
+			for _, r := range rs {
+				if r.From == f && r.Dangling && r.Text == c.token {
+					got = true
+				}
+			}
+			if got != c.dangling {
+				t.Errorf("dangling = %v, want %v; refs %+v", got, c.dangling, rs)
+			}
+		})
+	}
+}
+
+func TestExampleNamesStillLinkWhenTheFileExists(t *testing.T) {
+	tr := testutil.New(t)
+	app := tr.Repo(filepath.Join(tr.Code, "app"))
+	doc := tr.File(filepath.Join(app, "docs/adr/0054-x.md"), "# X\n")
+	f := tr.File(filepath.Join(app, "AGENTS.md"), "# App\nSee docs/adr/0054-x.md.\n")
+	_, rs := build(t, tr, config.Config{})
+	has(t, rs, f, doc, model.RefMention, "path")
+}

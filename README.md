@@ -130,12 +130,16 @@ name = "pi"
 user_files = ["~/.pi/agent/AGENTS.md"]
 project_files = ["AGENTS.md"]
 skill_dirs = ["~/.agents/skills"]
+bundled_skills = ["web-search"]         # skills it ships with no file on disk
 ```
 
 A built file is also recognised by a header comment such as
 `<!-- Built by agents-sync from ~/.agents/{core,personal}.md; edit those. -->`.
 Files that chezmoi manages, skills installed by the skills CLI and plugin files
-are recognised on their own.
+are recognised on their own. agentmd also knows the skills and slash commands
+that Claude Code and Codex ship inside their binaries
+([internal/harness/builtin.go](internal/harness/builtin.go)), so a mention of
+`run` or `/model` is not reported as a missing skill.
 
 Results live in `~/.cache/agentmd`. agentmd runs no background work: it scans
 when it starts, when you open the UI, when you press rescan, and when its tab

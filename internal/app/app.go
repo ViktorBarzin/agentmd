@@ -282,7 +282,7 @@ func (a *App) Scan() (*model.State, error) {
 			}
 		}
 	}
-	rs = dropOfferedSkills(rs, contexts)
+	rs = dropOfferedSkills(rs, contexts, harness.Offered(a.cfg.Harnesses))
 	analysed := a.analysisFor(res, contexts)
 
 	fs := findings.Compute(findings.Input{Files: res.Files, Refs: rs, Contexts: contexts,
@@ -532,9 +532,10 @@ func lockfiles(home string, repos []string) []string {
 	return out
 }
 
-// dropOfferedSkills clears the dangling mark on a skill mention when a probed
-// harness offers a skill of that name, such as a built-in skill with no file.
-func dropOfferedSkills(rs []model.Ref, contexts []model.Context) []model.Ref {
+// dropOfferedSkills drops a dangling skill mention when a probed harness
+// offers a skill of that name, or when a harness ships it inside its binary:
+// a bundled skill with no file, or a slash command for a /name mention.
+func dropOfferedSkills(rs []model.Ref, contexts []model.Context, builtin harness.Names) []model.Ref {
 	offered := map[string]bool{}
 	for _, c := range contexts {
 		for _, s := range c.Skills {
@@ -546,7 +547,7 @@ func dropOfferedSkills(rs []model.Ref, contexts []model.Context) []model.Ref {
 	}
 	out := rs[:0]
 	for _, r := range rs {
-		if r.Dangling && r.Sub == "skill" && offered[r.Text] {
+		if r.Dangling && r.Sub == "skill" && (offered[strings.TrimPrefix(r.Text, "/")] || builtin.Has(r.Text)) {
 			continue
 		}
 		out = append(out, r)

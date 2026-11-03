@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ViktorBarzin/agentmd/internal/config"
 	"github.com/ViktorBarzin/agentmd/internal/discover"
 	"github.com/ViktorBarzin/agentmd/internal/harness"
 	"github.com/ViktorBarzin/agentmd/internal/model"
@@ -237,5 +238,44 @@ func TestClaudeStateIgnoresRefreshTimestamps(t *testing.T) {
 	c := write(`{"cachedGrowthBookFeatures":{"tengu_agents_md_mod":false,"tengu_import":{"on":1},"tengu_banner_color":"blue"}}`)
 	if c.Flags == a.Flags {
 		t.Error("flipping a flag that changes instruction loading changes the hash")
+	}
+}
+
+func TestClaudeBuiltinSkills(t *testing.T) {
+	got := map[string]bool{}
+	for _, s := range harness.Builtins[model.HarnessClaude].Skills {
+		got[s] = true
+	}
+	for _, s := range []string{"run", "workflow-authoring", "code-review", "simplify", "init", "security-review", "loop",
+		"schedule", "claude-api", "update-config", "keybindings-help", "fewer-permission-prompts", "plugin-authoring"} {
+		if !got[s] {
+			t.Errorf("Claude Code ships the %s skill", s)
+		}
+	}
+}
+
+func TestOffered(t *testing.T) {
+	static := []config.StaticHarness{{Name: "pi", BundledSkills: []string{"pi-search"}}}
+	cases := []struct {
+		name, text string
+		want       bool
+	}{
+		{"a Claude bundled skill", "run", true},
+		{"a Claude bundled skill by slash", "/workflow-authoring", true},
+		{"a Claude slash command", "/model", true},
+		{"a Codex slash command", "/approvals", true},
+		{"a slash command named without its slash", "model", false},
+		{"a configured harness's bundled skill", "pi-search", true},
+		{"a configured harness's bundled skill by slash", "/pi-search", true},
+		{"a skill no harness ships", "doc-tone", false},
+		{"a slash skill no harness ships", "/doc-tone", false},
+	}
+	o := harness.Offered(static)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := o.Has(c.text); got != c.want {
+				t.Errorf("Has(%q) = %v, want %v", c.text, got, c.want)
+			}
+		})
 	}
 }
